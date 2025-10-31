@@ -195,7 +195,3 @@ void Text_Draw(float x, float y, char *text, float size) {
     glDisable(GL_BLEND);
     glDisable(GL_TEXTURE_2D);
 }
-
-
-void Text_UseShader(float width, float height) {
-}

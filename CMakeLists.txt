@@ -20,5 +20,8 @@ add_executable(bricks
     src/physics.c
 )
 
+set (CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address")
+
 target_link_libraries(bricks PRIVATE glfw)
 target_include_directories(bricks PRIVATE "./include")
