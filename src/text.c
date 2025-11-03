@@ -158,7 +158,6 @@ void Text_Init() {
 }
 
 void Text_Draw(float x, float y, char *text, float size) {
-    glColor3f(1, 1, 1);
     glEnable(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, atlas_texture);
     glEnable(GL_BLEND);

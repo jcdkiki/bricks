@@ -191,7 +191,7 @@ void Phys_Draw()
         
         if (i == selected_body) {
             glColor3f(1.f, 1.f, 0.f);
-            glLineWidth(2.f);
+            glLineWidth(4.f);
         }
         else {
             glColor3f(1.f, 1.f, 1.f);
@@ -230,6 +230,7 @@ void Phys_Draw()
     }
     glEnd();
 
+    glColor3f(1.f, 1.f, 1.f);
     static char text[128];
     sprintf(text, "n_contacts: %d", n_contacts);
     Text_Draw(10.f, 10.f, text, 8.f);    
@@ -242,6 +243,22 @@ void Phys_Draw()
         );
         Text_Draw(10.f, 20.f + 10.f * i, text, 8.f);
     }
+
+    if (glfwGetKey(window, GLFW_KEY_A)) glColor3f(1.f, 1.f, 1.f);
+    else glColor3f(0.3f, 0.3f, 0.3f);
+    Text_Draw(WIN_WIDTH - 58.f, 26.f, "A", 16.f);
+
+    if (glfwGetKey(window, GLFW_KEY_S)) glColor3f(1.f, 1.f, 1.f);
+    else glColor3f(0.3f, 0.3f, 0.3f);
+    Text_Draw(WIN_WIDTH - 42.f, 26.f, "S", 16.f);
+    
+    if (glfwGetKey(window, GLFW_KEY_D)) glColor3f(1.f, 1.f, 1.f);
+    else glColor3f(0.3f, 0.3f, 0.3f);
+    Text_Draw(WIN_WIDTH - 26.f, 26.f, "D", 16.f);
+    
+    if (glfwGetKey(window, GLFW_KEY_W)) glColor3f(1.f, 1.f, 1.f);
+    else glColor3f(0.3f, 0.3f, 0.3f);
+    Text_Draw(WIN_WIDTH - 42.f, 10.f, "W", 16.f);
 }
 
 static int PointInBody(Vec2 point, Body *body)
