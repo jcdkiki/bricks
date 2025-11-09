@@ -57,8 +57,6 @@ Contact contacts[N_CONTACTS];
 
 static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
 {
-    memset(x->data, 0, sizeof(*x->data) * x->rows * x->cols);
-
     for (int iter = 0; iter < 32; iter++) {
         for (int i = 0; i < x->rows; i++) {
             double new_xi = MATRIX_AT(*b, i, 0);
@@ -66,11 +64,17 @@ static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
                 if (i == j) continue;
                 new_xi -= MATRIX_AT(*A, i, j) * MATRIX_AT(*x, j, 0);
             }
-            MATRIX_AT(*x, i, 0) = new_xi / MATRIX_AT(*A, i, i);
-        }
-
-        for (int i = 0; i < x->rows; i++) {
-            MATRIX_AT(*x, i, 0) = fmax(0, MATRIX_AT(*x, i, 0));
+            new_xi /= MATRIX_AT(*A, i, i);
+            
+            if (i < N_CONTACTS) {
+                MATRIX_AT(*x, i, 0) = fmax(0, new_xi);
+            }
+            else {
+                int ci = i - N_CONTACTS;
+                double normal_force = MATRIX_AT(*x, ci, 0);
+                double max_friction = contacts[ci].mu * normal_force;
+                MATRIX_AT(*x, i, 0) = fmax(-max_friction, fmin(max_friction, new_xi));
+            }
         }
     }
 }
@@ -79,32 +83,6 @@ enum {
     AXIS_NORMAL,
     AXIS_TANGENT
 };
-
-static void InitJacobianMatrix(Matrix *J, int axis)
-{
-    Matrix_Init(J, N_CONTACTS, N_BODIES * 2);
-    
-    for (int i = 0; i < N_CONTACTS; i++) {
-        Contact *c = &contacts[i];
-        Vec2 axis_vec = (axis == AXIS_NORMAL) ? c->normal : c->tangent;
-
-        MATRIX_AT(*J, i, c->i1*2 + 0) = axis_vec.x;
-        MATRIX_AT(*J, i, c->i1*2 + 1) = axis_vec.y;
-        MATRIX_AT(*J, i, c->i2*2 + 0) = -axis_vec.x;
-        MATRIX_AT(*J, i, c->i2*2 + 1) = -axis_vec.y;
-    }
-}
-
-static void InitBVectorAccel(Matrix *b, int axis)
-{
-    Matrix_Init(b, N_CONTACTS, 1);
-
-    for (int i = 0; i < N_CONTACTS; i++) {
-        Contact *c = &contacts[i];
-        Vec2 axis_vec = (axis == AXIS_NORMAL) ? c->normal : c->tangent;
-        MATRIX_AT(*b, i, 0) = -Vec2_Dot(c->rel_accel, axis_vec);
-    }
-}
 
 static void InitInvMassMatrix(Matrix *M)
 {
@@ -123,21 +101,42 @@ static void Solve(Matrix *x)
     Matrix A, b;
 
     InitInvMassMatrix(&M);
-    InitJacobianMatrix(&J, AXIS_NORMAL);
+
+    Matrix_Init(&J, N_CONTACTS * 2, N_BODIES * 2);
+    for (int i = 0; i < N_CONTACTS; i++) {
+        Contact *c = &contacts[i];
+        
+        MATRIX_AT(J, i, c->i1*2 + 0) = c->normal.x;
+        MATRIX_AT(J, i, c->i1*2 + 1) = c->normal.y;
+        MATRIX_AT(J, i, c->i2*2 + 0) = -c->normal.x;
+        MATRIX_AT(J, i, c->i2*2 + 1) = -c->normal.y;
+        
+        MATRIX_AT(J, i + N_CONTACTS, c->i1*2 + 0) = c->tangent.x;
+        MATRIX_AT(J, i + N_CONTACTS, c->i1*2 + 1) = c->tangent.y;
+        MATRIX_AT(J, i + N_CONTACTS, c->i2*2 + 0) = -c->tangent.x;
+        MATRIX_AT(J, i + N_CONTACTS, c->i2*2 + 1) = -c->tangent.y;
+    }
+
     Matrix_InitTransposed(&J, &JT);
-    Matrix_Init(&JM, N_CONTACTS, N_BODIES * 2);
+    Matrix_Init(&JM, 2 * N_CONTACTS, N_BODIES * 2);
     
-    Matrix_Init(&A, N_CONTACTS, N_CONTACTS);
-    InitBVectorAccel(&b, AXIS_NORMAL);
-    Matrix_Init(x, N_CONTACTS, 1);
+    Matrix_Init(&A, 2 * N_CONTACTS, 2 * N_CONTACTS);
+    Matrix_Init(x, 2 * N_CONTACTS, 1);
     
     Matrix_Mul(&J, &M, &JM);
     Matrix_Mul(&JM, &JT, &A);
-
+    
+    Matrix_Init(&b, 2 * N_CONTACTS, 1);
+    for (int i = 0; i < N_CONTACTS; i++) {
+        Contact *c = &contacts[i];
+        MATRIX_AT(b, i, 0) = -Vec2_Dot(c->rel_accel, c->normal);
+        MATRIX_AT(b, i + N_CONTACTS, 0) = -Vec2_Dot(c->rel_accel, c->tangent);
+    }
+    
     ProjectedGaussSeidel(&A, &b, x);
-
-    Matrix_Free(&M); Matrix_Free(&J); Matrix_Free(&JT); Matrix_Free(&JM);
-    Matrix_Free(&A); Matrix_Free(&b);
+    
+    Matrix_Free(&M); Matrix_Free(&J); Matrix_Free(&JT);
+    Matrix_Free(&JM); Matrix_Free(&A); Matrix_Free(&b);
 }
 
 void Phys_Init()
@@ -190,7 +189,7 @@ void Phys_Init()
         .normal = {s_theta, -c_theta},
         .tangent = {-c_theta, -s_theta},
         .rel_accel = Vec2_Sub(bodies[2].accel, bodies[1].accel),
-        .mu = 1.f,
+        .mu = 0.f,
 
         .pos = {500 + 75 * s_theta, 500 - 75 * c_theta}
     };
@@ -200,6 +199,7 @@ void Phys_Init()
 
     for (int i = 0; i < N_CONTACTS; i++) {
         contacts[i].normal_force = MATRIX_AT(x, i, 0);
+        contacts[i].tangent_force = MATRIX_AT(x, i + N_CONTACTS, 0);
     }
     
     Matrix_Free(&x);
