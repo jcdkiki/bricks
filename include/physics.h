@@ -3,6 +3,6 @@
 
 void Phys_Init();
 void Phys_Draw();
-void Phys_Tick();
+void Phys_Key(int key, int action);
 
 #endif

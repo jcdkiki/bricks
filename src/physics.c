@@ -8,314 +8,58 @@
 #include "defines.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
-#define MAX_BODIES 128
-#define MAX_CONTACTS 128
-#define G 98
+#define G 9.8
 
-typedef struct {
-    Vec2 pos;
-    Vec2 vel;
-    double angle;
-    double ang_vel;
+#define N_BODIES 3
+#define N_CONTACTS 2
 
-    double mass;
-    double ang_mass;
+enum {
+    MODE_INPUT,
+    MODE_OUTPUT,
+    MODE_TOTAL
+};
 
-    int apply_gravity;
-    Vec2 size;
-
-    Vec2 force;
-    double torque;
-    double mu;
-} Body;
+struct {
+    bool show_ids;
+    int mode;
+    float line_len;
+} settings = { 1, MODE_INPUT, 4.f };
 
 typedef struct {
-    Body *b1, *b2;
-    Vec2 pos;
+    int i1, i2;
     Vec2 normal;
     Vec2 tangent;
-    double depth;
+    Vec2 rel_accel;
     double mu;
+
+    // just for visuals
+    Vec2 pos;
+
+    // solution
+    double normal_force;
+    double tangent_force;
 } Contact;
 
-Body bodies[MAX_BODIES];
-Contact contacts[MAX_CONTACTS];
-int n_bodies, n_contacts;
+typedef struct {
+    double mass;
+    Vec2 accel;
 
-int selected_body = -1;
+    // just for visuals
+    Vec2 center;
+    Vec2 size;
+    double angle;
+} Body;
 
-static void AddBrick(int i, Vec2 pos)
-{
-    bodies[i] = (Body) {
-        .pos = pos,
-        .vel = { 0, 0 },
-        .angle = 0,
-        .ang_vel = 0,
-        .mass = 1,
-        .ang_mass = (1.0f * (100*100 + 50*50)) / 12.0f,
-        .apply_gravity = 1,
-        .size = { 100, 50 },
-        .mu = 2.f
-    };
-}
-
-void Phys_Init()
-{
-    int si = 3, sj = 6;
-    n_bodies = si*sj + 1;
-
-    for (int i = 0; i < si; i++) {
-        for (int j = 0; j < sj; j++) {
-            AddBrick(i*sj + j, (Vec2) { 300 + 100*i, 550 - 50*j });
-        }
-    }
-
-    bodies[si*sj] = (Body) {
-        .pos = { 300, 600 }, .vel = { 0, 0 },
-        .angle = 0, .ang_vel = 0,
-        .mass = INFINITY, .ang_mass = INFINITY,
-        .apply_gravity = 0,
-        .size = { 2000, 50 },
-        .mu = 2.f
-    };
-}
-
-static void GetRectCorners(Body *body, Vec2 corners[4])
-{
-    double c = cos(body->angle);
-    double s = sin(body->angle);
-    double hw = body->size.x * 0.5f;
-    double hh = body->size.y * 0.5f;
-    
-    Vec2 right = {c * hw, s * hw};
-    Vec2 up = {-s * hh, c * hh};
-    
-    corners[0] = Vec2_Add(body->pos, Vec2_Add(right, up));
-    corners[1] = Vec2_Add(body->pos, Vec2_Sub(up, right));
-    corners[2] = Vec2_Sub(body->pos, Vec2_Add(right, up));
-    corners[3] = Vec2_Add(body->pos, Vec2_Sub(right, up));
-}
-
-static void ProjectCornersOnAxis(Vec2 corners[4], Vec2 axis, double *min, double *max)
-{
-    *min = DBL_MAX;
-    *max = -DBL_MAX;
-    for (int i = 0; i < 4; i++) {
-        double proj = Vec2_Dot(corners[i], axis);
-        if (proj < *min) *min = proj;
-        if (proj > *max) *max = proj;
-    }
-}
-
-static int IsCornerInsideBody(Vec2 corner, Body *body, Vec2 axes[2])
-{
-    for (int a = 0; a < 2; a++) {
-        double proj_v = Vec2_Dot(corner, axes[a]);
-        double proj_c = Vec2_Dot(body->pos, axes[a]);
-        double half_size = (a == 0) ? body->size.x * 0.5f : body->size.y * 0.5f;
-        if (fabs(proj_v - proj_c) > half_size) return 0;
-    }
-    return 1;
-}
-
-static Vec2 ComputeContactPoint(Vec2 corners1[4], Vec2 corners2[4], Body *b1, Body *b2, Vec2 axes[4])
-{
-    Vec2 contact_sum = {0, 0};
-    int contact_count = 0;
-    
-    for (int i = 0; i < 4; i++) {
-        if (IsCornerInsideBody(corners1[i], b2, &axes[2])) {
-            contact_sum = Vec2_Add(contact_sum, corners1[i]);
-            contact_count++;
-        }
-    }
-    
-    for (int i = 0; i < 4; i++) {
-        if (IsCornerInsideBody(corners2[i], b1, &axes[0])) {
-            contact_sum = Vec2_Add(contact_sum, corners2[i]);
-            contact_count++;
-        }
-    }
-    
-    return contact_count > 0 ? Vec2_Scale(contact_sum, 1.0f / contact_count)
-                             : Vec2_Scale(Vec2_Add(b1->pos, b2->pos), 0.5f);
-}
-
-static int BodiesCollide(Body *b1, Body *b2, Vec2 *normal, double *depth, Vec2 *pos)
-{
-    Vec2 corners1[4], corners2[4];
-    GetRectCorners(b1, corners1);
-    GetRectCorners(b2, corners2);
-    
-    Vec2 axes[4] = {
-        Vec2_Normalize(Vec2_Sub(corners1[0], corners1[1])),
-        Vec2_Normalize(Vec2_Sub(corners1[0], corners1[3])),
-        Vec2_Normalize(Vec2_Sub(corners2[0], corners2[1])),
-        Vec2_Normalize(Vec2_Sub(corners2[0], corners2[3]))
-    };
-    
-    double min_overlap = FLT_MAX;
-    Vec2 min_axis = {0, 0};
-    
-    for (int a = 0; a < 4; a++) {
-        double min1, max1, min2, max2;
-        ProjectCornersOnAxis(corners1, axes[a], &min1, &max1);
-        ProjectCornersOnAxis(corners2, axes[a], &min2, &max2);
-        
-        if (max1 - min2 < 1e-6f || max2 - min1 < 1e-6f) return 0;
-        
-        double overlap = fminf(max1, max2) - fmaxf(min1, min2);
-        if (overlap < min_overlap) {
-            min_overlap = overlap;
-            min_axis = axes[a];
-        }
-    }
-    
-    *depth = min_overlap;
-    *normal = Vec2_Dot(Vec2_Sub(b2->pos, b1->pos), min_axis) < 0 
-              ? Vec2_Scale(min_axis, -1) : min_axis;
-    *pos = ComputeContactPoint(corners1, corners2, b1, b2, axes);
-    
-    return 1;
-}
-
-void Phys_Draw()
-{
-    glDisable(GL_DEPTH_TEST);
-    for (int i = 0; i < n_bodies; i++) {
-        Body *body = &bodies[i];
-        glPushMatrix();
-        glTranslatef(body->pos.x, body->pos.y, 0);
-        glRotatef(body->angle * 180 / M_PI, 0, 0, 1);
-        
-        if (i == selected_body) {
-            glColor3f(1.f, 1.f, 0.f);
-            glLineWidth(4.f);
-        }
-        else {
-            glColor3f(1.f, 1.f, 1.f);
-            glLineWidth(1.f);
-        }
-        
-        glBegin(GL_LINE_LOOP);
-        glVertex2f(-body->size.x / 2, -body->size.y / 2);
-        glVertex2f(body->size.x / 2, -body->size.y / 2);
-        glVertex2f(body->size.x / 2, body->size.y / 2);
-        glVertex2f(-body->size.x / 2, body->size.y / 2);
-        glEnd();
-        
-        glPopMatrix();
-    }
-    
-    glColor3f(1.f, 1.f, 1.f);
-    glPointSize(5.f);
-    glBegin(GL_POINTS);
-    glColor3f(1.f, 0.f, 0.f);
-    for (int i = 0; i < n_contacts; i++) {
-        glVertex2f(contacts[i].pos.x, contacts[i].pos.y);
-    }
-    glEnd();
-
-    glLineWidth(2.f);
-    glBegin(GL_LINES);
-    for (int i = 0; i < n_contacts; i++) {
-        Contact *c = &contacts[i];
-        glColor3f(1.f, 0.f, 0.f);
-        glVertex2f(c->pos.x + 10 * c->normal.x, c->pos.y + 10 * c->normal.y);
-        glVertex2f(c->pos.x - 10 * c->normal.x, c->pos.y - 10 * c->normal.y);
-        glColor3f(0.f, 1.f, 0.f);
-        glVertex2f(c->pos.x + 10 * c->tangent.x, c->pos.y + 10 * c->tangent.y);
-        glVertex2f(c->pos.x - 10 * c->tangent.x, c->pos.y - 10 * c->tangent.y);
-    }
-    glEnd();
-
-    glColor3f(1.f, 1.f, 1.f);
-    static char text[128];
-    sprintf(text, "n_contacts: %d", n_contacts);
-    Text_Draw(10.f, 10.f, text, 8.f);    
-    
-    for (int i = 0; i < n_bodies; i++) {
-        Body *body = &bodies[i];
-        sprintf(text, "%d: pos=(%.0f %.0f) vel=(%.0f %.0f)", i,
-            body->pos.x, body->pos.y,
-            body->vel.x, body->vel.y
-        );
-        Text_Draw(10.f, 20.f + 10.f * i, text, 8.f);
-    }
-
-    if (glfwGetKey(window, GLFW_KEY_A)) glColor3f(1.f, 1.f, 1.f);
-    else glColor3f(0.3f, 0.3f, 0.3f);
-    Text_Draw(WIN_WIDTH - 58.f, 26.f, "A", 16.f);
-
-    if (glfwGetKey(window, GLFW_KEY_S)) glColor3f(1.f, 1.f, 1.f);
-    else glColor3f(0.3f, 0.3f, 0.3f);
-    Text_Draw(WIN_WIDTH - 42.f, 26.f, "S", 16.f);
-    
-    if (glfwGetKey(window, GLFW_KEY_D)) glColor3f(1.f, 1.f, 1.f);
-    else glColor3f(0.3f, 0.3f, 0.3f);
-    Text_Draw(WIN_WIDTH - 26.f, 26.f, "D", 16.f);
-    
-    if (glfwGetKey(window, GLFW_KEY_W)) glColor3f(1.f, 1.f, 1.f);
-    else glColor3f(0.3f, 0.3f, 0.3f);
-    Text_Draw(WIN_WIDTH - 42.f, 10.f, "W", 16.f);
-}
-
-static int PointInBody(Vec2 point, Body *body)
-{
-    Vec2 local = Vec2_Sub(point, body->pos);
-    double c = cosf(-body->angle);
-    double s = sinf(-body->angle);
-    double lx = local.x * c - local.y * s;
-    double ly = local.x * s + local.y * c;
-    return fabs(lx) <= body->size.x * 0.5f && fabs(ly) <= body->size.y * 0.5f;
-}
-
-static void ApplyForce(Body *body, Vec2 force, Vec2 pos)
-{
-    Vec2 r = Vec2_Sub(pos, body->pos);
-    
-    double inv_mass = isinf(body->mass) ? 0.0f : 1.0f / body->mass;
-    body->vel = Vec2_Add(body->vel, Vec2_Scale(force, inv_mass));
-    
-    double inv_ang_mass = isinf(body->ang_mass) ? 0.0f : 1.0f / body->ang_mass;
-    body->ang_vel += inv_ang_mass * Vec2_Cross(r, force);
-}
-
-static void Phys_Input()
-{
-    double cursor_x, cursor_y;
-    int state = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT);
-    glfwGetCursorPos(window, &cursor_x, &cursor_y);
-    
-    Vec2 cursor = {cursor_x, cursor_y};
-    
-    if (state == GLFW_PRESS) {
-        selected_body = -1;
-        for (int i = 0; i < n_bodies; i++) {
-            if (PointInBody(cursor, &bodies[i])) {
-                selected_body = i;
-                break;
-            }
-        }
-    }
-
-    if (selected_body == -1) return;
-    Body *b = &bodies[selected_body];
-
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) ApplyForce(b, (Vec2) { -10, 0 }, b->pos);
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) ApplyForce(b, (Vec2) { 10, 0 }, b->pos);
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) ApplyForce(b, (Vec2) { 0, -10 }, b->pos);
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) ApplyForce(b, (Vec2) { 0, 10 }, b->pos);
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) b->ang_vel += 0.1f;
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) b->ang_vel -= 0.1f;
-}
+Body bodies[N_BODIES];
+Contact contacts[N_CONTACTS];
 
 static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
 {
     memset(x->data, 0, sizeof(*x->data) * x->rows * x->cols);
 
-    for (int iter = 0; iter < 10; iter++) {
+    for (int iter = 0; iter < 32; iter++) {
         for (int i = 0; i < x->rows; i++) {
             double new_xi = MATRIX_AT(*b, i, 0);
             for (int j = 0; j < x->rows; j++) {
@@ -331,41 +75,6 @@ static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
     }
 }
 
-static void ProjectedGaussSeidelTangent(Matrix *A, Matrix *b, Matrix *x, Matrix *x_normal)
-{
-    memset(x->data, 0, sizeof(*x->data) * x->rows * x->cols);
-
-    for (int iter = 0; iter < 10; iter++) {
-        for (int i = 0; i < x->rows; i++) {
-            double new_xi = MATRIX_AT(*b, i, 0);
-            for (int j = 0; j < x->rows; j++) {
-                if (i == j) continue;
-                new_xi -= MATRIX_AT(*A, i, j) * MATRIX_AT(*x, j, 0);
-            }
-            MATRIX_AT(*x, i, 0) = new_xi / MATRIX_AT(*A, i, i);
-        }
-
-        for (int i = 0; i < x->rows; i++) {
-            double lim = contacts[i].mu * MATRIX_AT(*x_normal, i, 0);
-            MATRIX_AT(*x, i, 0) = fmin(lim, fmax(-lim, MATRIX_AT(*x, i, 0)));
-        }
-    }
-}
-
-static void InitInvMassMatrix(Matrix *M)
-{
-    Matrix_Init(M, n_bodies * 3, n_bodies * 3);
-    for (int i = 0; i < n_bodies; i++) {
-        Body *b = &bodies[i];
-        double inv_mass     = isinf(b->mass)     ? 0.0f : 1.0f / b->mass;
-        double inv_ang_mass = isinf(b->ang_mass) ? 0.0f : 1.0f / b->ang_mass;
-
-        MATRIX_AT(*M, i*3 + 0, i*3 + 0) = inv_mass;
-        MATRIX_AT(*M, i*3 + 1, i*3 + 1) = inv_mass;
-        MATRIX_AT(*M, i*3 + 2, i*3 + 2) = inv_ang_mass;
-    }
-}
-
 enum {
     AXIS_NORMAL,
     AXIS_TANGENT
@@ -373,61 +82,42 @@ enum {
 
 static void InitJacobianMatrix(Matrix *J, int axis)
 {
-    Matrix_Init(J, n_contacts, n_bodies * 3);
-    memset(J->data, 0, sizeof(*J->data) * J->rows * J->cols);
-
-    for (int i = 0; i < n_contacts; i++) {
+    Matrix_Init(J, N_CONTACTS, N_BODIES * 2);
+    
+    for (int i = 0; i < N_CONTACTS; i++) {
         Contact *c = &contacts[i];
-        Vec2 r1 = Vec2_Sub(c->pos, c->b1->pos);
-        Vec2 r2 = Vec2_Sub(c->pos, c->b2->pos);
-        int i1 = c->b1 - bodies;
-        int i2 = c->b2 - bodies;
-
         Vec2 axis_vec = (axis == AXIS_NORMAL) ? c->normal : c->tangent;
 
-        MATRIX_AT(*J, i, i1*3 + 0) = axis_vec.x;
-        MATRIX_AT(*J, i, i1*3 + 1) = axis_vec.y;
-        MATRIX_AT(*J, i, i1*3 + 2) = Vec2_Cross(r1, axis_vec);
-        MATRIX_AT(*J, i, i2*3 + 0) = -axis_vec.x;
-        MATRIX_AT(*J, i, i2*3 + 1) = -axis_vec.y;
-        MATRIX_AT(*J, i, i2*3 + 2) = -Vec2_Cross(r2, axis_vec);
+        MATRIX_AT(*J, i, c->i1*2 + 0) = axis_vec.x;
+        MATRIX_AT(*J, i, c->i1*2 + 1) = axis_vec.y;
+        MATRIX_AT(*J, i, c->i2*2 + 0) = -axis_vec.x;
+        MATRIX_AT(*J, i, c->i2*2 + 1) = -axis_vec.y;
     }
 }
 
-static Vec2 GetRelativeVelocity(Contact *c)
+static void InitBVectorAccel(Matrix *b, int axis)
 {
-    Vec2 r1 = Vec2_Sub(c->pos, c->b1->pos);
-    Vec2 r2 = Vec2_Sub(c->pos, c->b2->pos);
-    
-    Vec2 v1 = Vec2_Add(c->b1->vel, (Vec2){-c->b1->ang_vel * r1.y, c->b1->ang_vel * r1.x});
-    Vec2 v2 = Vec2_Add(c->b2->vel, (Vec2){-c->b2->ang_vel * r2.y, c->b2->ang_vel * r2.x});
-    return Vec2_Sub(v1, v2);
-}
+    Matrix_Init(b, N_CONTACTS, 1);
 
-static void InitBVectorNormal(Matrix *b)
-{
-    Matrix_Init(b, n_contacts, 1);
-    for (int i = 0; i < n_contacts; i++) {
+    for (int i = 0; i < N_CONTACTS; i++) {
         Contact *c = &contacts[i];
-        Vec2 v = GetRelativeVelocity(c);
-
-        double bias = (c->depth > 0.01f) ? (0.2f * (c->depth - 0.01f) / DT) : 0.f;
-        MATRIX_AT(*b, i, 0) = Vec2_Dot(v, c->normal) + bias;
+        Vec2 axis_vec = (axis == AXIS_NORMAL) ? c->normal : c->tangent;
+        MATRIX_AT(*b, i, 0) = -Vec2_Dot(c->rel_accel, axis_vec);
     }
 }
 
-static void InitBVectorTangent(Matrix *b)
+static void InitInvMassMatrix(Matrix *M)
 {
-    Matrix_Init(b, n_contacts, 1);
-    
-    for (int i = 0; i < n_contacts; i++) {
-        Contact *c = &contacts[i];
-        Vec2 v = GetRelativeVelocity(c);
-        MATRIX_AT(*b, i, 0) = -Vec2_Dot(v, c->tangent);
+    Matrix_Init(M, N_BODIES * 2, N_BODIES * 2);
+
+    for (int i = 0; i < N_BODIES; i++) {
+        double inv_mass = 1.f / bodies[i].mass;
+        MATRIX_AT(*M, i*2, i*2) = inv_mass;
+        MATRIX_AT(*M, i*2 + 1, i*2 + 1) = inv_mass;
     }
 }
 
-static void SolveNormalImpulse(Matrix *x)
+static void Solve(Matrix *x)
 {
     Matrix M, J, JT, JM;
     Matrix A, b;
@@ -435,11 +125,11 @@ static void SolveNormalImpulse(Matrix *x)
     InitInvMassMatrix(&M);
     InitJacobianMatrix(&J, AXIS_NORMAL);
     Matrix_InitTransposed(&J, &JT);
-    Matrix_Init(&JM, n_contacts, n_bodies * 3);
+    Matrix_Init(&JM, N_CONTACTS, N_BODIES * 2);
     
-    Matrix_Init(&A, n_contacts, n_contacts);
-    InitBVectorNormal(&b);
-    Matrix_Init(x, n_contacts, 1);
+    Matrix_Init(&A, N_CONTACTS, N_CONTACTS);
+    InitBVectorAccel(&b, AXIS_NORMAL);
+    Matrix_Init(x, N_CONTACTS, 1);
     
     Matrix_Mul(&J, &M, &JM);
     Matrix_Mul(&JM, &JT, &A);
@@ -450,97 +140,212 @@ static void SolveNormalImpulse(Matrix *x)
     Matrix_Free(&A); Matrix_Free(&b);
 }
 
-static void SolveTangentImpulse(Matrix *x, Matrix *x_normal)
+void Phys_Init()
 {
-    Matrix M, J, JT, JM;
-    Matrix A, b;
+    double theta = 30.f / 180.f * M_PI;
+    double c_theta = cos(theta);
+    double s_theta = sin(theta);
 
-    InitInvMassMatrix(&M);
-    InitJacobianMatrix(&J, AXIS_TANGENT);
-    Matrix_InitTransposed(&J, &JT);
-    Matrix_Init(&JM, n_contacts, n_bodies * 3);
+    bodies[0] = (Body) {
+        .mass = INFINITY,
+        .accel = {0, 0},
+
+        .size = {1000, 50},
+        .center = {500, 500},
+        .angle = theta
+    };
     
-    Matrix_Init(&A, n_contacts, n_contacts);
-    InitBVectorTangent(&b);
-    Matrix_Init(x, n_contacts, 1);
+    bodies[1] = (Body) {
+        .mass = 1.f,
+        .accel = {0, G},
 
-    Matrix_Mul(&J, &M, &JM);
-    Matrix_Mul(&JM, &JT, &A);
+        .size = {100, 50},
+        .center = {500 + 50 * s_theta, 500 - 50 * c_theta},
+        .angle = theta
+    };
+
+    bodies[2] = (Body) {
+        .mass = 1.f,
+        .accel = {0, G},
+
+        .size = {100, 50},
+        .center = {500 + 100 * s_theta, 500 - 100 * c_theta},
+        .angle = theta
+    };
+
+    contacts[0] = (Contact) {
+        .i1 = 0,
+        .i2 = 1,
+        .normal = {s_theta, -c_theta},
+        .tangent = {-c_theta, -s_theta},
+        .rel_accel = Vec2_Sub(bodies[1].accel, bodies[0].accel),
+        .mu = 1.f,
+
+        .pos = {500 + 25 * s_theta, 500 - 25 * c_theta}
+    };
+
+    contacts[1] = (Contact) {
+        .i1 = 1,
+        .i2 = 2,
+        .normal = {s_theta, -c_theta},
+        .tangent = {-c_theta, -s_theta},
+        .rel_accel = Vec2_Sub(bodies[2].accel, bodies[1].accel),
+        .mu = 1.f,
+
+        .pos = {500 + 75 * s_theta, 500 - 75 * c_theta}
+    };
+
+    Matrix x;
+    Solve(&x);
+
+    for (int i = 0; i < N_CONTACTS; i++) {
+        contacts[i].normal_force = MATRIX_AT(x, i, 0);
+    }
     
-    ProjectedGaussSeidelTangent(&A, &b, x, x_normal);
-
-    Matrix_Free(&M); Matrix_Free(&J); Matrix_Free(&JT); Matrix_Free(&JM);
-    Matrix_Free(&A); Matrix_Free(&b);
+    Matrix_Free(&x);
 }
 
-static void ResolveContacts()
+void DrawArrow(Vec2 p1, Vec2 p2)
 {
-    if (n_contacts == 0) return;
-
-    Matrix x_normal, x_tangent;
-    SolveNormalImpulse(&x_normal);
-    SolveTangentImpulse(&x_tangent, &x_normal);
+    glLineWidth(3.f);
+    glBegin(GL_LINES);
+    glVertex2f(p1.x, p1.y);
+    glVertex2f(p2.x, p2.y);
     
-    for (int i = 0; i < n_contacts; i++) {
-        Contact *c = &contacts[i];
-        double normal_impulse = MATRIX_AT(x_normal, i, 0);
-        double tangent_impulse = MATRIX_AT(x_tangent, i, 0);
-
-        Vec2 impulse = Vec2_Add(
-            Vec2_Scale(c->normal, normal_impulse),
-            Vec2_Scale(c->tangent, -tangent_impulse)
-        );
-
-        ApplyForce(c->b1, Vec2_Scale(impulse, -1), c->pos);
-        ApplyForce(c->b2, impulse, c->pos);
-    }
-
-    Matrix_Free(&x_normal); Matrix_Free(&x_tangent);
+    Vec2 dir = Vec2_Normalize(Vec2_Sub(p1, p2));
+    Vec2 perp = {-dir.y, dir.x};
+    Vec2 tip1 = Vec2_Add(p2, Vec2_Scale(Vec2_Add(dir, perp), 5.f));
+    Vec2 tip2 = Vec2_Add(p2, Vec2_Scale(Vec2_Sub(dir, perp), 5.f));
+    
+    glVertex2f(p2.x, p2.y);
+    glVertex2f(tip1.x, tip1.y);
+    glVertex2f(p2.x, p2.y);
+    glVertex2f(tip2.x, tip2.y);
+    glEnd();
 }
 
-void Phys_Tick()
+void Phys_Draw()
 {
-    for (int i = 0; i < n_bodies; i++) {
-        Body *body = &bodies[i];
-        body->torque = 0;
-        body->force = (Vec2){0, 0};
-
-        Vec2 gravity = {0, G * body->mass};
-        if (body->apply_gravity) ApplyForce(body, Vec2_Scale(gravity, DT), body->pos);
+    glDisable(GL_DEPTH_TEST);
+    
+    glColor3f(1.f, 1.f, 1.f);
+    glLineWidth(1.f);
+    for (int i = 0; i < N_BODIES; i++) {
+        glPushMatrix();
+        glTranslated(bodies[i].center.x, bodies[i].center.y, 0);
+        glRotated(bodies[i].angle * 180.f / M_PI, 0, 0, 1);
+        glBegin(GL_LINE_LOOP);
+        glVertex2d(bodies[i].size.x / 2, bodies[i].size.y / 2);
+        glVertex2d(bodies[i].size.x / 2, -bodies[i].size.y / 2);
+        glVertex2d(-bodies[i].size.x / 2, -bodies[i].size.y / 2);
+        glVertex2d(-bodies[i].size.x / 2, bodies[i].size.y / 2);
+        glEnd();
+        glPopMatrix();
     }
 
-    Phys_Input();
-
-    for (int i = 0; i < n_bodies; i++) {
-        Body *body = &bodies[i];
-        body->ang_vel += body->torque / body->ang_mass;
-        body->vel = Vec2_Add(body->vel, Vec2_Scale(body->force, 1.f / body->mass));
-    }
-
-    n_contacts = 0;
-    for (int i = 0; i < n_bodies; i++) {
-        for (int j = i + 1; j < n_bodies; j++) {
-            Vec2 normal, pos;
-            double depth;
-
-            if (BodiesCollide(&bodies[i], &bodies[j], &normal, &depth, &pos)) {
-                contacts[n_contacts] = (Contact) {
-                    .b1 = &bodies[i], .b2 = &bodies[j], .pos = pos,
-                    .normal = normal,
-                    .tangent = (Vec2) { -normal.y, normal.x },
-                    .depth = depth,
-                    .mu = sqrtf(bodies[i].mu * bodies[j].mu)
-                };
-                n_contacts++;
-            }
+    if (settings.show_ids) {
+        for (int i = 0; i < N_BODIES; i++) {
+            char buf[8];
+            sprintf(buf, "%d", i);
+            Text_Draw(bodies[i].center.x - 8.f, bodies[i].center.y - 8.f, buf, 16.f);
         }
     }
 
-    ResolveContacts();
+    if (settings.mode == MODE_INPUT) {
+        // accel
+        glColor3f(1.f, 0.3f, 0.3f);
+        for (int i = 0; i < N_BODIES; i++) {
+            Body *b = &bodies[i];
+            if (b->accel.x == 0 && b->accel.y == 0) continue;
 
-    for (int i = 0; i < n_bodies; i++) {
-        Body *body = &bodies[i];
-        body->angle += body->ang_vel * DT;
-        body->pos = Vec2_Add(body->pos, Vec2_Scale(body->vel, DT));
+            Vec2 p = Vec2_Add(b->center, Vec2_Scale(b->accel, settings.line_len));
+            DrawArrow(b->center, p);
+        }
+    
+        // rel_accel
+        glColor3f(0.3f, 1.f, 0.3f);
+        for (int i = 0; i < N_CONTACTS; i++) {
+            Contact *c = &contacts[i];
+            if (c->rel_accel.x == 0 && c->rel_accel.y == 0) continue;
+
+            Vec2 p = Vec2_Add(c->pos, Vec2_Scale(c->rel_accel, settings.line_len));
+            DrawArrow(c->pos, p);
+
+            double n_scale = Vec2_Dot(c->normal, c->rel_accel) * settings.line_len;
+            double t_scale = Vec2_Dot(c->tangent, c->rel_accel) * settings.line_len;
+
+            Vec2 p1 = Vec2_Add(c->pos, Vec2_Scale(c->normal, n_scale));
+            Vec2 p2 = Vec2_Add(c->pos, Vec2_Scale(c->tangent, t_scale));
+            if (n_scale != 0) DrawArrow(c->pos, p1);
+            if (t_scale != 0) DrawArrow(c->pos, p2);
+
+        }
+    
+        // contact points
+        glColor3f(1.f, 1.f, 0.3f);
+        glPointSize(5.f);
+        glBegin(GL_POINTS);
+        for (int i = 0; i < N_CONTACTS; i++) {
+            glVertex2f(contacts[i].pos.x, contacts[i].pos.y);
+        }
+        glEnd();
+    }
+
+    if (settings.mode == MODE_OUTPUT) {
+        glColor3f(1.f, 1.f, 0.3f);
+        for (int i = 0; i < N_CONTACTS; i++) {
+            Contact *c = &contacts[i];
+            Vec2 p1 = Vec2_Add(c->pos, Vec2_Scale(c->normal, c->normal_force * settings.line_len));
+            Vec2 p2 = Vec2_Add(c->pos, Vec2_Scale(c->tangent, c->tangent_force * settings.line_len));
+            if (c->normal_force != 0) DrawArrow(c->pos, p1);
+            if (c->tangent_force != 0) DrawArrow(c->pos, p2);
+        }
+    }
+
+    if (settings.mode == MODE_TOTAL) {
+        for (int i = 0; i < N_BODIES; i++) {
+            Body *b = &bodies[i];
+            Vec2 accel = b->accel;
+
+            for (int j = 0; j < N_CONTACTS; j++) {
+                Contact *c = &contacts[j];
+                if (c->i2 == i) {
+                    accel = Vec2_Add(accel, Vec2_Scale(c->normal, c->normal_force / b->mass));
+                    accel = Vec2_Add(accel, Vec2_Scale(c->tangent, c->tangent_force / b->mass));
+                }
+                if (c->i1 == i) {
+                    accel = Vec2_Sub(accel, Vec2_Scale(c->normal, c->normal_force / b->mass));
+                    accel = Vec2_Sub(accel, Vec2_Scale(c->tangent, c->tangent_force / b->mass));
+                }
+            }
+
+            Vec2 p = Vec2_Add(b->center, Vec2_Scale(accel, settings.line_len));
+            if (Vec2_Length(accel) > 1e-6f) DrawArrow(b->center, p);
+        }
+    }
+
+    glColor3f(1.f, 1.f, 1.f);
+    Text_Draw(10.f, 10.f,
+        "W - show_ids\n"
+        "1 - input mode\n"
+        "2 - output mode\n"
+        "3 - total mode\n"
+        "Q/E - line len\n",
+        8.f
+    );
+}
+
+void Phys_Key(int key, int action)
+{
+    if (action != GLFW_PRESS) return;
+
+    switch (key) {
+    case GLFW_KEY_W: settings.show_ids = !settings.show_ids; break;
+    case GLFW_KEY_1: settings.mode = MODE_INPUT; break;
+    case GLFW_KEY_2: settings.mode = MODE_OUTPUT; break;
+    case GLFW_KEY_3: settings.mode = MODE_TOTAL; break;
+    case GLFW_KEY_Q: settings.line_len /= 2.f; break;
+    case GLFW_KEY_E: settings.line_len *= 2.f; break;
+    default: break; 
     }
 }
