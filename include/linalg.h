@@ -27,5 +27,8 @@ void Matrix_Init(Matrix *mat, int rows, int cols);
 void Matrix_Mul(Matrix *A, Matrix *B, Matrix *res);
 void Matrix_InitTransposed(Matrix *src, Matrix *dst);
 void Matrix_InitIdentity(Matrix *mat, int size);
+void Matrix_Add(Matrix *A, Matrix *B, Matrix *res);
+void Matrix_Put(Matrix *mat, Matrix *src, int row, int col);
+void Matrix_Print(Matrix *mat);
 
 #endif

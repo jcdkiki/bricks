@@ -10,7 +10,7 @@
 #include <string.h>
 #include <stdbool.h>
 
-#define G 9.8
+#define GRAVITY 9.8
 
 #define N_BODIES 3
 #define N_CONTACTS 2
@@ -25,7 +25,8 @@ struct {
     bool show_ids;
     int mode;
     float line_len;
-} settings = { 1, MODE_INPUT, 4.f };
+    int show_axes;
+} settings = { 1, MODE_INPUT, 4.f, 1 };
 
 typedef struct {
     int i1, i2;
@@ -57,24 +58,21 @@ Contact contacts[N_CONTACTS];
 
 static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
 {
-    for (int iter = 0; iter < 32; iter++) {
+    for (int iter = 0; iter < 1000; iter++) {
         for (int i = 0; i < x->rows; i++) {
             double new_xi = MATRIX_AT(*b, i, 0);
             for (int j = 0; j < x->rows; j++) {
                 if (i == j) continue;
                 new_xi -= MATRIX_AT(*A, i, j) * MATRIX_AT(*x, j, 0);
             }
+
             new_xi /= MATRIX_AT(*A, i, i);
-            
-            if (i < N_CONTACTS) {
-                MATRIX_AT(*x, i, 0) = fmax(0, new_xi);
-            }
-            else {
-                int ci = i - N_CONTACTS;
-                double normal_force = MATRIX_AT(*x, ci, 0);
-                double max_friction = contacts[ci].mu * normal_force;
-                MATRIX_AT(*x, i, 0) = fmax(-max_friction, fmin(max_friction, new_xi));
-            }
+            MATRIX_AT(*x, i, 0) = new_xi;
+        }
+
+        for (int i = 0; i < x->rows; i++) {
+            double x_i = MATRIX_AT(*x, i, 0);
+            MATRIX_AT(*x, i, 0) = fmax(0.f, x_i);
         }
     }
 }
@@ -95,48 +93,148 @@ static void InitInvMassMatrix(Matrix *M)
     }
 }
 
+static void InitMuMatrix(Matrix *Mu)
+{
+    Matrix_Init(Mu, N_CONTACTS, N_CONTACTS);
+    for (int i = 0; i < N_CONTACTS; i++) {
+        Contact *c = &contacts[i];
+        MATRIX_AT(*Mu, i, i) = c->mu;
+    }
+}
+
 static void Solve(Matrix *x)
 {
-    Matrix M, J, JT, JM;
-    Matrix A, b;
+    int N = N_BODIES;
+    int M = N_CONTACTS;
 
-    InitInvMassMatrix(&M);
+    Matrix Mass;
+    InitInvMassMatrix(&Mass);
+    printf("Mass = \n"); Matrix_Print(&Mass);
+    
+    Matrix Mu;
+    InitMuMatrix(&Mu);
 
-    Matrix_Init(&J, N_CONTACTS * 2, N_BODIES * 2);
-    for (int i = 0; i < N_CONTACTS; i++) {
-        Contact *c = &contacts[i];
-        
-        MATRIX_AT(J, i, c->i1*2 + 0) = c->normal.x;
-        MATRIX_AT(J, i, c->i1*2 + 1) = c->normal.y;
-        MATRIX_AT(J, i, c->i2*2 + 0) = -c->normal.x;
-        MATRIX_AT(J, i, c->i2*2 + 1) = -c->normal.y;
-        
-        MATRIX_AT(J, i + N_CONTACTS, c->i1*2 + 0) = c->tangent.x;
-        MATRIX_AT(J, i + N_CONTACTS, c->i1*2 + 1) = c->tangent.y;
-        MATRIX_AT(J, i + N_CONTACTS, c->i2*2 + 0) = -c->tangent.x;
-        MATRIX_AT(J, i + N_CONTACTS, c->i2*2 + 1) = -c->tangent.y;
+    // E = 
+    // [ 1 1 0 0 0 0 ]
+    // [ 0 0 ... 0 0 ]
+    // [ 0 0 0 0 1 1 ]
+    Matrix E;
+    Matrix_Init(&E, M, 2*M);
+    for (int i = 0; i < M; i++) {
+        MATRIX_AT(E, i, i*2 + 0) = 1;
+        MATRIX_AT(E, i, i*2 + 1) = 1;
+    }
+    printf("E = \n"); Matrix_Print(&E);
+
+    Matrix negET;
+    Matrix_InitTransposed(&E, &negET);
+    for (int i = 0; i < negET.rows * negET.cols; i++) {
+        negET.data[i] *= -1;
     }
 
-    Matrix_InitTransposed(&J, &JT);
-    Matrix_Init(&JM, 2 * N_CONTACTS, N_BODIES * 2);
-    
-    Matrix_Init(&A, 2 * N_CONTACTS, 2 * N_CONTACTS);
-    Matrix_Init(x, 2 * N_CONTACTS, 1);
-    
-    Matrix_Mul(&J, &M, &JM);
-    Matrix_Mul(&JM, &JT, &A);
-    
-    Matrix_Init(&b, 2 * N_CONTACTS, 1);
+    // C = 
+    // [ 0   0   0 ]
+    // [ 0   0   E ]
+    // [ Mu -E^T 0 ]
+    Matrix C;
+    Matrix_Init(&C, 4*M, 4*M);
+    Matrix_Put(&C, &Mu, 3*M, 0);
+    Matrix_Put(&C, &negET, 2*M, M);
+    Matrix_Put(&C, &E, M, 2*M);
+    printf("C = \n"); Matrix_Print(&C);
+
+    Matrix Jn;
+    Matrix_Init(&Jn, N_CONTACTS, N_BODIES * 2);
     for (int i = 0; i < N_CONTACTS; i++) {
         Contact *c = &contacts[i];
-        MATRIX_AT(b, i, 0) = -Vec2_Dot(c->rel_accel, c->normal);
-        MATRIX_AT(b, i + N_CONTACTS, 0) = -Vec2_Dot(c->rel_accel, c->tangent);
+        MATRIX_AT(Jn, i, c->i1*2 + 0) = c->normal.x;
+        MATRIX_AT(Jn, i, c->i1*2 + 1) = c->normal.y;
+        MATRIX_AT(Jn, i, c->i2*2 + 0) = -c->normal.x;
+        MATRIX_AT(Jn, i, c->i2*2 + 1) = -c->normal.y;
     }
+    printf("Jn = \n"); Matrix_Print(&Jn);
+
+    Matrix Jt;
+    Matrix_Init(&Jt, N_CONTACTS * 2, N_BODIES * 2);
+    for (int i = 0; i < N_CONTACTS; i++) {
+        Contact *c = &contacts[i];
+        MATRIX_AT(Jt, i, c->i1*2 + 0) = c->tangent.x;
+        MATRIX_AT(Jt, i, c->i1*2 + 1) = c->tangent.y;
+        MATRIX_AT(Jt, i, c->i2*2 + 0) = -c->tangent.x;
+        MATRIX_AT(Jt, i, c->i2*2 + 1) = -c->tangent.y;
+
+        MATRIX_AT(Jt, i + N_CONTACTS, c->i1*2 + 0) = -c->tangent.x;
+        MATRIX_AT(Jt, i + N_CONTACTS, c->i1*2 + 1) = -c->tangent.y;
+        MATRIX_AT(Jt, i + N_CONTACTS, c->i2*2 + 0) = c->tangent.x;
+        MATRIX_AT(Jt, i + N_CONTACTS, c->i2*2 + 1) = c->tangent.y;
+    }
+    printf("Jt = \n"); Matrix_Print(&Jt);
+
+    // G = 
+    // [J_t]
+    // [J_n]
+    // [0]
+    Matrix G;
+    Matrix_Init(&G, 4*M, 2*N);
+    Matrix_Put(&G, &Jt, 0, 0);
+    Matrix_Put(&G, &Jn, N_CONTACTS*2, 0);
+    printf("G = \n"); Matrix_Print(&G);
+
+    Matrix GT;
+    Matrix_InitTransposed(&G, &GT);
+
+    // A = C + G * M * G^T
+    Matrix GM;
+    Matrix_Init(&GM, 4*M, 2*N);
+    Matrix_Mul(&G, &Mass, &GM);
     
+    Matrix GMGT;
+    Matrix_Init(&GMGT, 4*M, 4*M);
+    Matrix_Mul(&GM, &GT, &GMGT);
+
+    Matrix A;
+    Matrix_Init(&A, 4*M, 4*M);
+    Matrix_Add(&C, &GMGT, &A);
+
+    // b = G * M * F (all forces)
+    Matrix F;
+    Matrix_Init(&F, 2*N, 1);
+    for (int i = 0; i < N_BODIES; i++) {
+        Body *b = &bodies[i];
+        MATRIX_AT(F, i*2, 0) = b->accel.x;
+        MATRIX_AT(F, i*2 + 1, 0) = b->accel.y;
+    }
+    printf("F = \n"); Matrix_Print(&F);
+    
+    Matrix b;
+    Matrix_Init(&b, 4*M, 1);
+    Matrix_Mul(&GM, &F, &b);
+    // for (int i = 0; i < b.rows * b.cols; i++) {
+    //     b.data[i] *= -1.0;
+    // }
+
+    // for (int i = 0; i < A.rows; i++) {
+    // if (fabs(A.data[i * A.cols + i]) < 1e-6) {
+    //     A.data[i * A.cols + i] = 1e-6;
+    // }
+
+    // x = [f_n  f_t^+  f_t^-  beta]^T
+    Matrix_Init(x, 4*M, 1);
     ProjectedGaussSeidel(&A, &b, x);
+
+    printf("A = \n");
+    Matrix_Print(&A);
     
-    Matrix_Free(&M); Matrix_Free(&J); Matrix_Free(&JT);
-    Matrix_Free(&JM); Matrix_Free(&A); Matrix_Free(&b);
+    printf("b = \n");
+    Matrix_Print(&b);
+    
+    printf("x = \n");
+    Matrix_Print(x);
+
+    Matrix_Free(&A); Matrix_Free(&b); Matrix_Free(&F);
+    Matrix_Free(&GMGT); Matrix_Free(&GM); Matrix_Free(&GT); Matrix_Free(&G);
+    Matrix_Free(&Jt); Matrix_Free(&Jn); Matrix_Free(&C);
+    Matrix_Free(&negET); Matrix_Free(&E); Matrix_Free(&Mu); Matrix_Free(&Mass);
 }
 
 void Phys_Init()
@@ -156,7 +254,7 @@ void Phys_Init()
     
     bodies[1] = (Body) {
         .mass = 1.f,
-        .accel = {0, G},
+        .accel = {0, GRAVITY},
 
         .size = {100, 50},
         .center = {500 + 50 * s_theta, 500 - 50 * c_theta},
@@ -165,7 +263,7 @@ void Phys_Init()
 
     bodies[2] = (Body) {
         .mass = 1.f,
-        .accel = {0, G},
+        .accel = {0, GRAVITY},
 
         .size = {100, 50},
         .center = {500 + 100 * s_theta, 500 - 100 * c_theta},
@@ -189,7 +287,7 @@ void Phys_Init()
         .normal = {s_theta, -c_theta},
         .tangent = {-c_theta, -s_theta},
         .rel_accel = Vec2_Sub(bodies[2].accel, bodies[1].accel),
-        .mu = 0.f,
+        .mu = 1.f,
 
         .pos = {500 + 75 * s_theta, 500 - 75 * c_theta}
     };
@@ -199,7 +297,8 @@ void Phys_Init()
 
     for (int i = 0; i < N_CONTACTS; i++) {
         contacts[i].normal_force = MATRIX_AT(x, i, 0);
-        contacts[i].tangent_force = MATRIX_AT(x, i + N_CONTACTS, 0);
+        contacts[i].tangent_force = MATRIX_AT(x, i + N_CONTACTS, 0)
+                                  - MATRIX_AT(x, i + 2*N_CONTACTS, 0);
     }
     
     Matrix_Free(&x);
@@ -324,13 +423,28 @@ void Phys_Draw()
         }
     }
 
+    if (settings.show_axes) {
+        glColor3f(0.3f, 0.3f, 1.f);
+        glLineWidth(2.f);
+        glBegin(GL_LINES);
+        for (int i = 0; i < N_CONTACTS; i++) {
+            Contact *c = &contacts[i];
+            Vec2 p1 = Vec2_Add(c->pos, Vec2_Scale(c->normal, 3 * settings.line_len));
+            Vec2 p2 = Vec2_Add(c->pos, Vec2_Scale(c->tangent, 3 * settings.line_len));
+            DrawArrow(c->pos, p1);
+            DrawArrow(c->pos, p2);
+        }
+        glEnd();
+    }
+
     glColor3f(1.f, 1.f, 1.f);
     Text_Draw(10.f, 10.f,
         "W - show_ids\n"
         "1 - input mode\n"
         "2 - output mode\n"
         "3 - total mode\n"
-        "Q/E - line len\n",
+        "Q/E - line len\n"
+        "S - show axes\n",
         8.f
     );
 }
@@ -346,6 +460,7 @@ void Phys_Key(int key, int action)
     case GLFW_KEY_3: settings.mode = MODE_TOTAL; break;
     case GLFW_KEY_Q: settings.line_len /= 2.f; break;
     case GLFW_KEY_E: settings.line_len *= 2.f; break;
+    case GLFW_KEY_S: settings.show_axes = !settings.show_axes; break;
     default: break; 
     }
 }
