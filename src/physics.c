@@ -29,10 +29,9 @@ struct {
 } settings = { 1, MODE_INPUT, 4.f, 1 };
 
 typedef struct {
-    int i1, i2;
+    int i, j;
     Vec2 normal;
     Vec2 tangent;
-    Vec2 rel_accel;
     double mu;
 
     // just for visuals
@@ -56,9 +55,10 @@ typedef struct {
 Body bodies[N_BODIES];
 Contact contacts[N_CONTACTS];
 
-static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
+// Ax >= b
+static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x, int project)
 {
-    for (int iter = 0; iter < 1000; iter++) {
+    for (int iter = 0; iter < 32; iter++) {
         for (int i = 0; i < x->rows; i++) {
             double new_xi = MATRIX_AT(*b, i, 0);
             for (int j = 0; j < x->rows; j++) {
@@ -70,6 +70,8 @@ static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
             MATRIX_AT(*x, i, 0) = new_xi;
         }
 
+        if (!project) continue;
+
         for (int i = 0; i < x->rows; i++) {
             double x_i = MATRIX_AT(*x, i, 0);
             MATRIX_AT(*x, i, 0) = fmax(0.f, x_i);
@@ -77,164 +79,48 @@ static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
     }
 }
 
-enum {
-    AXIS_NORMAL,
-    AXIS_TANGENT
-};
-
-static void InitInvMassMatrix(Matrix *M)
-{
-    Matrix_Init(M, N_BODIES * 2, N_BODIES * 2);
-
-    for (int i = 0; i < N_BODIES; i++) {
-        double inv_mass = 1.f / bodies[i].mass;
-        MATRIX_AT(*M, i*2, i*2) = inv_mass;
-        MATRIX_AT(*M, i*2 + 1, i*2 + 1) = inv_mass;
-    }
-}
-
-static void InitMuMatrix(Matrix *Mu)
-{
-    Matrix_Init(Mu, N_CONTACTS, N_CONTACTS);
-    for (int i = 0; i < N_CONTACTS; i++) {
-        Contact *c = &contacts[i];
-        MATRIX_AT(*Mu, i, i) = c->mu;
-    }
-}
-
 static void Solve(Matrix *x)
-{
-    int N = N_BODIES;
-    int M = N_CONTACTS;
+{    
+    Matrix A, b;
+    Matrix_Init(&A, N_CONTACTS, N_CONTACTS);
+    Matrix_Init(&b, N_CONTACTS, 1);
+    Matrix_Init(x, N_CONTACTS, 1);
 
-    Matrix Mass;
-    InitInvMassMatrix(&Mass);
-    printf("Mass = \n"); Matrix_Print(&Mass);
-    
-    Matrix Mu;
-    InitMuMatrix(&Mu);
+    for (int k = 0; k < N_CONTACTS; k++) {
+        for (int l = 0; l < N_CONTACTS; l++) {
+            Contact *ck = &contacts[k], *cl = &contacts[l];
+            Body *bki = &bodies[ck->i], *bkj = &bodies[ck->j];
+            double mi = bki->mass, mj = bkj->mass;
+            double nk_nl = Vec2_Dot(ck->normal, cl->normal);
 
-    // E = 
-    // [ 1 1 0 0 0 0 ]
-    // [ 0 0 ... 0 0 ]
-    // [ 0 0 0 0 1 1 ]
-    Matrix E;
-    Matrix_Init(&E, M, 2*M);
-    for (int i = 0; i < M; i++) {
-        MATRIX_AT(E, i, i*2 + 0) = 1;
-        MATRIX_AT(E, i, i*2 + 1) = 1;
-    }
-    printf("E = \n"); Matrix_Print(&E);
-
-    Matrix negET;
-    Matrix_InitTransposed(&E, &negET);
-    for (int i = 0; i < negET.rows * negET.cols; i++) {
-        negET.data[i] *= -1;
+            if (l == k) {
+                MATRIX_AT(A, k, l) = nk_nl / mi + nk_nl / mj;
+            }
+            else if (cl->j == ck->j) MATRIX_AT(A, k, l) = nk_nl / mj;
+            else if (cl->i == ck->i) MATRIX_AT(A, k, l) = nk_nl / mi;
+            else if (cl->i == ck->j) MATRIX_AT(A, k, l) = -nk_nl / mj;
+            else if (cl->j == ck->i) MATRIX_AT(A, k, l) = -nk_nl / mi;
+        }
     }
 
-    // C = 
-    // [ 0   0   0 ]
-    // [ 0   0   E ]
-    // [ Mu -E^T 0 ]
-    Matrix C;
-    Matrix_Init(&C, 4*M, 4*M);
-    Matrix_Put(&C, &Mu, 3*M, 0);
-    Matrix_Put(&C, &negET, 2*M, M);
-    Matrix_Put(&C, &E, M, 2*M);
-    printf("C = \n"); Matrix_Print(&C);
-
-    Matrix Jn;
-    Matrix_Init(&Jn, N_CONTACTS, N_BODIES * 2);
-    for (int i = 0; i < N_CONTACTS; i++) {
-        Contact *c = &contacts[i];
-        MATRIX_AT(Jn, i, c->i1*2 + 0) = c->normal.x;
-        MATRIX_AT(Jn, i, c->i1*2 + 1) = c->normal.y;
-        MATRIX_AT(Jn, i, c->i2*2 + 0) = -c->normal.x;
-        MATRIX_AT(Jn, i, c->i2*2 + 1) = -c->normal.y;
+    for (int k = 0; k < N_CONTACTS; k++) {
+        Contact *ck = &contacts[k];
+        Vec2 nk = ck->normal;
+        Vec2 rel_accel = Vec2_Sub(bodies[ck->j].accel, bodies[ck->i].accel);
+        MATRIX_AT(b, k, 0) = -Vec2_Dot(nk, rel_accel);
     }
-    printf("Jn = \n"); Matrix_Print(&Jn);
 
-    Matrix Jt;
-    Matrix_Init(&Jt, N_CONTACTS * 2, N_BODIES * 2);
-    for (int i = 0; i < N_CONTACTS; i++) {
-        Contact *c = &contacts[i];
-        MATRIX_AT(Jt, i, c->i1*2 + 0) = c->tangent.x;
-        MATRIX_AT(Jt, i, c->i1*2 + 1) = c->tangent.y;
-        MATRIX_AT(Jt, i, c->i2*2 + 0) = -c->tangent.x;
-        MATRIX_AT(Jt, i, c->i2*2 + 1) = -c->tangent.y;
-
-        MATRIX_AT(Jt, i + N_CONTACTS, c->i1*2 + 0) = -c->tangent.x;
-        MATRIX_AT(Jt, i + N_CONTACTS, c->i1*2 + 1) = -c->tangent.y;
-        MATRIX_AT(Jt, i + N_CONTACTS, c->i2*2 + 0) = c->tangent.x;
-        MATRIX_AT(Jt, i + N_CONTACTS, c->i2*2 + 1) = c->tangent.y;
-    }
-    printf("Jt = \n"); Matrix_Print(&Jt);
-
-    // G = 
-    // [J_t]
-    // [J_n]
-    // [0]
-    Matrix G;
-    Matrix_Init(&G, 4*M, 2*N);
-    Matrix_Put(&G, &Jt, 0, 0);
-    Matrix_Put(&G, &Jn, N_CONTACTS*2, 0);
-    printf("G = \n"); Matrix_Print(&G);
-
-    Matrix GT;
-    Matrix_InitTransposed(&G, &GT);
-
-    // A = C + G * M * G^T
-    Matrix GM;
-    Matrix_Init(&GM, 4*M, 2*N);
-    Matrix_Mul(&G, &Mass, &GM);
-    
-    Matrix GMGT;
-    Matrix_Init(&GMGT, 4*M, 4*M);
-    Matrix_Mul(&GM, &GT, &GMGT);
-
-    Matrix A;
-    Matrix_Init(&A, 4*M, 4*M);
-    Matrix_Add(&C, &GMGT, &A);
-
-    // b = G * M * F (all forces)
-    Matrix F;
-    Matrix_Init(&F, 2*N, 1);
-    for (int i = 0; i < N_BODIES; i++) {
-        Body *b = &bodies[i];
-        MATRIX_AT(F, i*2, 0) = b->accel.x;
-        MATRIX_AT(F, i*2 + 1, 0) = b->accel.y;
-    }
-    printf("F = \n"); Matrix_Print(&F);
-    
-    Matrix b;
-    Matrix_Init(&b, 4*M, 1);
-    Matrix_Mul(&GM, &F, &b);
-    // for (int i = 0; i < b.rows * b.cols; i++) {
-    //     b.data[i] *= -1.0;
-    // }
-
-    // for (int i = 0; i < A.rows; i++) {
-    // if (fabs(A.data[i * A.cols + i]) < 1e-6) {
-    //     A.data[i * A.cols + i] = 1e-6;
-    // }
-
-    // x = [f_n  f_t^+  f_t^-  beta]^T
-    Matrix_Init(x, 4*M, 1);
-    ProjectedGaussSeidel(&A, &b, x);
-
-    printf("A = \n");
+    printf("NORMAL\nA=\n");
     Matrix_Print(&A);
-    
-    printf("b = \n");
+    printf("\nb=\n");
     Matrix_Print(&b);
+
+    ProjectedGaussSeidel(&A, &b, x, 1);
     
-    printf("x = \n");
+    printf("\nx=\n");
     Matrix_Print(x);
 
-    Matrix_Free(&A); Matrix_Free(&b); Matrix_Free(&F);
-    Matrix_Free(&GMGT); Matrix_Free(&GM); Matrix_Free(&GT); Matrix_Free(&G);
-    Matrix_Free(&Jt); Matrix_Free(&Jn); Matrix_Free(&C);
-    Matrix_Free(&negET); Matrix_Free(&E); Matrix_Free(&Mu); Matrix_Free(&Mass);
+    Matrix_Free(&A); Matrix_Free(&b);
 }
 
 void Phys_Init()
@@ -271,22 +157,20 @@ void Phys_Init()
     };
 
     contacts[0] = (Contact) {
-        .i1 = 0,
-        .i2 = 1,
+        .i = 0,
+        .j = 1,
         .normal = {s_theta, -c_theta},
         .tangent = {-c_theta, -s_theta},
-        .rel_accel = Vec2_Sub(bodies[1].accel, bodies[0].accel),
         .mu = 1.f,
 
         .pos = {500 + 25 * s_theta, 500 - 25 * c_theta}
     };
 
     contacts[1] = (Contact) {
-        .i1 = 1,
-        .i2 = 2,
+        .i = 1,
+        .j = 2,
         .normal = {s_theta, -c_theta},
         .tangent = {-c_theta, -s_theta},
-        .rel_accel = Vec2_Sub(bodies[2].accel, bodies[1].accel),
         .mu = 1.f,
 
         .pos = {500 + 75 * s_theta, 500 - 75 * c_theta}
@@ -294,13 +178,9 @@ void Phys_Init()
 
     Matrix x;
     Solve(&x);
-
     for (int i = 0; i < N_CONTACTS; i++) {
         contacts[i].normal_force = MATRIX_AT(x, i, 0);
-        contacts[i].tangent_force = MATRIX_AT(x, i + N_CONTACTS, 0)
-                                  - MATRIX_AT(x, i + 2*N_CONTACTS, 0);
     }
-    
     Matrix_Free(&x);
 }
 
@@ -365,13 +245,14 @@ void Phys_Draw()
         glColor3f(0.3f, 1.f, 0.3f);
         for (int i = 0; i < N_CONTACTS; i++) {
             Contact *c = &contacts[i];
-            if (c->rel_accel.x == 0 && c->rel_accel.y == 0) continue;
+            Vec2 rel_accel = Vec2_Sub(bodies[c->j].accel, bodies[c->i].accel);
+            if (rel_accel.x == 0 && rel_accel.y == 0) continue;
 
-            Vec2 p = Vec2_Add(c->pos, Vec2_Scale(c->rel_accel, settings.line_len));
+            Vec2 p = Vec2_Add(c->pos, Vec2_Scale(rel_accel, settings.line_len));
             DrawArrow(c->pos, p);
 
-            double n_scale = Vec2_Dot(c->normal, c->rel_accel) * settings.line_len;
-            double t_scale = Vec2_Dot(c->tangent, c->rel_accel) * settings.line_len;
+            double n_scale = Vec2_Dot(c->normal, rel_accel) * settings.line_len;
+            double t_scale = Vec2_Dot(c->tangent, rel_accel) * settings.line_len;
 
             Vec2 p1 = Vec2_Add(c->pos, Vec2_Scale(c->normal, n_scale));
             Vec2 p2 = Vec2_Add(c->pos, Vec2_Scale(c->tangent, t_scale));
@@ -408,11 +289,11 @@ void Phys_Draw()
 
             for (int j = 0; j < N_CONTACTS; j++) {
                 Contact *c = &contacts[j];
-                if (c->i2 == i) {
+                if (c->j == i) {
                     accel = Vec2_Add(accel, Vec2_Scale(c->normal, c->normal_force / b->mass));
                     accel = Vec2_Add(accel, Vec2_Scale(c->tangent, c->tangent_force / b->mass));
                 }
-                if (c->i1 == i) {
+                if (c->i == i) {
                     accel = Vec2_Sub(accel, Vec2_Scale(c->normal, c->normal_force / b->mass));
                     accel = Vec2_Sub(accel, Vec2_Scale(c->tangent, c->tangent_force / b->mass));
                 }
