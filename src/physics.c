@@ -66,33 +66,38 @@ double CalcRelAccel(Matrix *A, Matrix *b, Matrix *x, int k)
 }
 
 // Ax >= b
+// Helper to clamp values
+double Clamp(double v, double min, double max) {
+    if (v < min) return min;
+    if (v > max) return max;
+    return v;
+}
+
 static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
 {
-    for (int iter = 0; iter < 1000; iter++) {
-        if (iter % 100 == 0) {
-            printf("ITER %d: ", iter);
-            Matrix_PrintTransposed(x);
-        }
+    int M = x->rows / 2; 
 
+    for (int iter = 0; iter < 100; iter++) {
+        
         for (int i = 0; i < x->rows; i++) {
             double new_xi = MATRIX_AT(*b, i, 0);
+            
             for (int j = 0; j < x->rows; j++) {
                 if (i == j) continue;
                 new_xi -= MATRIX_AT(*A, i, j) * MATRIX_AT(*x, j, 0);
             }
 
             new_xi /= MATRIX_AT(*A, i, i);
-            MATRIX_AT(*x, i, 0) = new_xi;
-        }
 
-        for (int i = 0; i < x->rows; i++) {
-            double x_i = MATRIX_AT(*x, i, 0);
-            MATRIX_AT(*x, i, 0) = fmax(0.f, x_i);
-        }
-
-        for (int i = 0; i < N_CONTACTS; i++) {
-            double rel = CalcRelAccel(A, b, x, i);
-            MATRIX_AT(*x, i + 3*N_CONTACTS, 0) = fabs(rel);
+            if (i < M) { 
+                MATRIX_AT(*x, i, 0) = fmax(0.0, new_xi);
+            } 
+            else {
+                double normal_force = MATRIX_AT(*x, i - M, 0);
+                double mu = contacts[i - M].mu;
+                double limit = mu * normal_force;
+                MATRIX_AT(*x, i, 0) = Clamp(new_xi, -limit, limit);
+            }
         }
     }
 }
@@ -127,13 +132,13 @@ void ProjectForces(Matrix *A, int forces, int axes)
 
 static void Solve(Matrix *x)
 {    
-    Matrix Ann, Ant, Atn, Att, b;
-    Matrix_Init(&Ann, N_CONTACTS, N_CONTACTS);
-    Matrix_Init(&Ant, N_CONTACTS, N_CONTACTS);
-    Matrix_Init(&Atn, N_CONTACTS, N_CONTACTS);
-    Matrix_Init(&Att, N_CONTACTS, N_CONTACTS);
-    Matrix_Init(&b, N_CONTACTS * 4, 1);
-    Matrix_Init(x, N_CONTACTS * 4, 1);
+    int M = N_CONTACTS;
+    
+    Matrix Ann, Ant, Atn, Att;
+    Matrix_Init(&Ann, M, M);
+    Matrix_Init(&Ant, M, M);
+    Matrix_Init(&Atn, M, M);
+    Matrix_Init(&Att, M, M);
 
     ProjectForces(&Ann, AXIS_NORMAL, AXIS_NORMAL);
     ProjectForces(&Ant, AXIS_NORMAL, AXIS_TANGENT);
@@ -141,62 +146,31 @@ static void Solve(Matrix *x)
     ProjectForces(&Att, AXIS_TANGENT, AXIS_TANGENT);
 
     Matrix A;
-    int M = N_CONTACTS;
-    Matrix_Init(&A, M * 4, M * 4);
+    Matrix_Init(&A, M * 2, M * 2);
     
     Matrix_Put(&A, &Ann, 0, 0);
     Matrix_Put(&A, &Ant, 0, M);
-    for (int i = 0; i < M*M; i++) Ant.data[i] *= -1.f;
-    Matrix_Put(&A, &Ant, 0, 2*M);
-
     Matrix_Put(&A, &Atn, M, 0);
-    for (int i = 0; i < M*M; i++) Atn.data[i] *= -1.f;
-    Matrix_Put(&A, &Atn, 2*M, 0);
-
     Matrix_Put(&A, &Att, M, M);
-    Matrix_Put(&A, &Att, 2*M, 2*M);
-    for (int i = 0; i < M*M; i++) Att.data[i] *= -1.f;
-    Matrix_Put(&A, &Att, M, 2*M);
-    Matrix_Put(&A, &Att, 2*M, M);
 
-    Matrix I;
-    Matrix_Init(&I, M, M);
-    for (int i = 0; i < M; i++) MATRIX_AT(I, i, i) = 1.f;
+    Matrix b;
+    Matrix_Init(&b, M * 2, 1);
+    Matrix_Init(x, M * 2, 1);
 
-    Matrix_Put(&A, &I, M, 3*M);
-    for (int i = 0; i < M; i++) MATRIX_AT(I, i, i) = -1.f;
-    Matrix_Put(&A, &I, 2*M, 3*M);
-
-    Matrix_Put(&A, &I, 3*M, 1*M);
-    Matrix_Put(&A, &I, 3*M, 2*M);
-
-    for (int i = 0; i < M; i++) MATRIX_AT(I, i, i) = contacts[i].mu;
-    Matrix_Put(&A, &I, 3*M, 0);
-
-    for (int k = 0; k < N_CONTACTS; k++) {
+    for (int k = 0; k < M; k++) {
         Contact *ck = &contacts[k];
         Vec2 nk = ck->normal;
         Vec2 tk = ck->tangent;
         Vec2 rel_accel = Vec2_Sub(bodies[ck->j].accel, bodies[ck->i].accel);
 
-        MATRIX_AT(b, k, 0) = -Vec2_Dot(nk, rel_accel);
+        MATRIX_AT(b, k, 0)     = -Vec2_Dot(nk, rel_accel);
         MATRIX_AT(b, k + M, 0) = -Vec2_Dot(tk, rel_accel);
-        MATRIX_AT(b, k + 2*M, 0) = Vec2_Dot(tk, rel_accel);
     }
-
-    printf("NORMAL\nA=\n");
-    Matrix_Print(&A);
-    printf("\nb=\n");
-    Matrix_Print(&b);
 
     ProjectedGaussSeidel(&A, &b, x);
     
-    printf("\nx=\n");
-    Matrix_Print(x);
-
     Matrix_Free(&A); Matrix_Free(&b);
     Matrix_Free(&Ann); Matrix_Free(&Ant); Matrix_Free(&Atn); Matrix_Free(&Att);
-    Matrix_Free(&I);
 }
 
 void Phys_Init()
@@ -235,10 +209,9 @@ void Phys_Init()
     contacts[0] = (Contact) {
         .i = 0,
         .j = 1,
-        .normal = {s_theta, -c_theta},
+        .normal = {s_theta, -c_theta}, 
         .tangent = {-c_theta, -s_theta},
-        .mu = 0.25f,
-
+        .mu = 1.f,
         .pos = {500 + 25 * s_theta, 500 - 25 * c_theta}
     };
 
@@ -248,7 +221,6 @@ void Phys_Init()
         .normal = {s_theta, -c_theta},
         .tangent = {-c_theta, -s_theta},
         .mu = 0.25f,
-
         .pos = {500 + 75 * s_theta, 500 - 75 * c_theta}
     };
 
@@ -256,7 +228,7 @@ void Phys_Init()
     Solve(&x);
     for (int i = 0; i < N_CONTACTS; i++) {
         contacts[i].normal_force = MATRIX_AT(x, i, 0);
-        contacts[i].tangent_force = MATRIX_AT(x, i + N_CONTACTS, 0) - MATRIX_AT(x, i + 2*N_CONTACTS, 0);
+        contacts[i].tangent_force = MATRIX_AT(x, i + N_CONTACTS, 0);
     }
     Matrix_Free(&x);
 }

@@ -15,6 +15,30 @@ static inline double Vec2_Length(Vec2 v) { return sqrtf(v.x * v.x + v.y * v.y); 
 static inline Vec2 Vec2_Normalize(Vec2 v) { return Vec2_Scale(v, 1.0f / Vec2_Length(v)); }
 static inline double Vec2_Cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
 
+typedef struct {
+    double x, y, z;
+} Vec3;
+
+static inline double Vec3_Dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline Vec3 Vec3_Add(Vec3 a, Vec3 b) { return (Vec3){a.x+b.x, a.y+b.y, a.z+b.z}; }
+static inline Vec3 Vec3_Sub(Vec3 a, Vec3 b) { return (Vec3){a.x-b.x, a.y-b.y, a.z-b.z}; }
+static inline Vec3 Vec3_Scale(Vec3 a, double s) { return (Vec3){a.x*s, a.y*s, a.z*s}; }
+static inline double Vec3_Length(Vec3 a) { return sqrt(Vec3_Dot(a, a)); }
+
+static inline Vec3 Vec3_Normalize(Vec3 a) {
+    double len = Vec3_Length(a);
+    if (len == 0) return (Vec3){0,0,0};
+    return Vec3_Scale(a, 1.0/len);
+}
+
+static inline Vec3 Vec3_Cross(Vec3 a, Vec3 b) {
+    return (Vec3){
+        a.y * b.z - a.z * b.y,
+        a.z * b.x - a.x * b.z,
+        a.x * b.y - a.y * b.x
+    };
+}
+
 #define MATRIX_AT(mat, row, col) ((mat).data[(row) * (mat).cols + (col)])
 
 typedef struct {
