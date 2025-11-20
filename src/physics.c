@@ -7,6 +7,7 @@
 #include "linalg.h"
 #include "defines.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 
@@ -55,10 +56,24 @@ typedef struct {
 Body bodies[N_BODIES];
 Contact contacts[N_CONTACTS];
 
-// Ax >= b
-static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x, int project)
+double CalcRelAccel(Matrix *A, Matrix *b, Matrix *x, int k)
 {
-    for (int iter = 0; iter < 32; iter++) {
+    double res = -MATRIX_AT(*b, k, 0);
+    for (int i = 0; i < x->rows; i++) {
+        res += MATRIX_AT(*A, k, i) * MATRIX_AT(*x, i, 0);
+    }
+    return res;
+}
+
+// Ax >= b
+static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x)
+{
+    for (int iter = 0; iter < 1000; iter++) {
+        if (iter % 100 == 0) {
+            printf("ITER %d: ", iter);
+            Matrix_PrintTransposed(x);
+        }
+
         for (int i = 0; i < x->rows; i++) {
             double new_xi = MATRIX_AT(*b, i, 0);
             for (int j = 0; j < x->rows; j++) {
@@ -70,44 +85,103 @@ static void ProjectedGaussSeidel(Matrix *A, Matrix *b, Matrix *x, int project)
             MATRIX_AT(*x, i, 0) = new_xi;
         }
 
-        if (!project) continue;
-
         for (int i = 0; i < x->rows; i++) {
             double x_i = MATRIX_AT(*x, i, 0);
             MATRIX_AT(*x, i, 0) = fmax(0.f, x_i);
+        }
+
+        for (int i = 0; i < N_CONTACTS; i++) {
+            double rel = CalcRelAccel(A, b, x, i);
+            MATRIX_AT(*x, i + 3*N_CONTACTS, 0) = fabs(rel);
+        }
+    }
+}
+
+enum {
+    AXIS_NORMAL,
+    AXIS_TANGENT
+};
+
+void ProjectForces(Matrix *A, int forces, int axes)
+{
+    for (int k = 0; k < N_CONTACTS; k++) {
+        for (int l = 0; l < N_CONTACTS; l++) {
+            Contact *ck = &contacts[k], *cl = &contacts[l];
+            Body *bki = &bodies[ck->i], *bkj = &bodies[ck->j];
+            double mi = bki->mass, mj = bkj->mass;
+            
+            Vec2 force_axis = (forces == AXIS_NORMAL) ? cl->normal : cl->tangent;
+            Vec2 project_to = (axes == AXIS_NORMAL) ? ck->normal : ck->tangent;
+            double nk_nl = Vec2_Dot(force_axis, project_to);
+
+            if (l == k) {
+                MATRIX_AT(*A, k, l) = nk_nl / mi + nk_nl / mj;
+            }
+            else if (cl->j == ck->j) MATRIX_AT(*A, k, l) = nk_nl / mj;
+            else if (cl->i == ck->i) MATRIX_AT(*A, k, l) = nk_nl / mi;
+            else if (cl->i == ck->j) MATRIX_AT(*A, k, l) = -nk_nl / mj;
+            else if (cl->j == ck->i) MATRIX_AT(*A, k, l) = -nk_nl / mi;
         }
     }
 }
 
 static void Solve(Matrix *x)
 {    
-    Matrix A, b;
-    Matrix_Init(&A, N_CONTACTS, N_CONTACTS);
-    Matrix_Init(&b, N_CONTACTS, 1);
-    Matrix_Init(x, N_CONTACTS, 1);
+    Matrix Ann, Ant, Atn, Att, b;
+    Matrix_Init(&Ann, N_CONTACTS, N_CONTACTS);
+    Matrix_Init(&Ant, N_CONTACTS, N_CONTACTS);
+    Matrix_Init(&Atn, N_CONTACTS, N_CONTACTS);
+    Matrix_Init(&Att, N_CONTACTS, N_CONTACTS);
+    Matrix_Init(&b, N_CONTACTS * 4, 1);
+    Matrix_Init(x, N_CONTACTS * 4, 1);
 
-    for (int k = 0; k < N_CONTACTS; k++) {
-        for (int l = 0; l < N_CONTACTS; l++) {
-            Contact *ck = &contacts[k], *cl = &contacts[l];
-            Body *bki = &bodies[ck->i], *bkj = &bodies[ck->j];
-            double mi = bki->mass, mj = bkj->mass;
-            double nk_nl = Vec2_Dot(ck->normal, cl->normal);
+    ProjectForces(&Ann, AXIS_NORMAL, AXIS_NORMAL);
+    ProjectForces(&Ant, AXIS_NORMAL, AXIS_TANGENT);
+    ProjectForces(&Atn, AXIS_TANGENT, AXIS_NORMAL);
+    ProjectForces(&Att, AXIS_TANGENT, AXIS_TANGENT);
 
-            if (l == k) {
-                MATRIX_AT(A, k, l) = nk_nl / mi + nk_nl / mj;
-            }
-            else if (cl->j == ck->j) MATRIX_AT(A, k, l) = nk_nl / mj;
-            else if (cl->i == ck->i) MATRIX_AT(A, k, l) = nk_nl / mi;
-            else if (cl->i == ck->j) MATRIX_AT(A, k, l) = -nk_nl / mj;
-            else if (cl->j == ck->i) MATRIX_AT(A, k, l) = -nk_nl / mi;
-        }
-    }
+    Matrix A;
+    int M = N_CONTACTS;
+    Matrix_Init(&A, M * 4, M * 4);
+    
+    Matrix_Put(&A, &Ann, 0, 0);
+    Matrix_Put(&A, &Ant, 0, M);
+    for (int i = 0; i < M*M; i++) Ant.data[i] *= -1.f;
+    Matrix_Put(&A, &Ant, 0, 2*M);
+
+    Matrix_Put(&A, &Atn, M, 0);
+    for (int i = 0; i < M*M; i++) Atn.data[i] *= -1.f;
+    Matrix_Put(&A, &Atn, 2*M, 0);
+
+    Matrix_Put(&A, &Att, M, M);
+    Matrix_Put(&A, &Att, 2*M, 2*M);
+    for (int i = 0; i < M*M; i++) Att.data[i] *= -1.f;
+    Matrix_Put(&A, &Att, M, 2*M);
+    Matrix_Put(&A, &Att, 2*M, M);
+
+    Matrix I;
+    Matrix_Init(&I, M, M);
+    for (int i = 0; i < M; i++) MATRIX_AT(I, i, i) = 1.f;
+
+    Matrix_Put(&A, &I, M, 3*M);
+    for (int i = 0; i < M; i++) MATRIX_AT(I, i, i) = -1.f;
+    Matrix_Put(&A, &I, 2*M, 3*M);
+
+    Matrix_Put(&A, &I, 3*M, 1*M);
+    Matrix_Put(&A, &I, 3*M, 2*M);
+
+    for (int i = 0; i < M; i++) MATRIX_AT(I, i, i) = contacts[i].mu;
+    Matrix_Put(&A, &I, 3*M, 0);
 
     for (int k = 0; k < N_CONTACTS; k++) {
         Contact *ck = &contacts[k];
         Vec2 nk = ck->normal;
+        Vec2 tk = ck->tangent;
         Vec2 rel_accel = Vec2_Sub(bodies[ck->j].accel, bodies[ck->i].accel);
+
         MATRIX_AT(b, k, 0) = -Vec2_Dot(nk, rel_accel);
+        MATRIX_AT(b, k + M, 0) = -Vec2_Dot(tk, rel_accel);
+        MATRIX_AT(b, k + 2*M, 0) = Vec2_Dot(tk, rel_accel);
     }
 
     printf("NORMAL\nA=\n");
@@ -115,12 +189,14 @@ static void Solve(Matrix *x)
     printf("\nb=\n");
     Matrix_Print(&b);
 
-    ProjectedGaussSeidel(&A, &b, x, 1);
+    ProjectedGaussSeidel(&A, &b, x);
     
     printf("\nx=\n");
     Matrix_Print(x);
 
     Matrix_Free(&A); Matrix_Free(&b);
+    Matrix_Free(&Ann); Matrix_Free(&Ant); Matrix_Free(&Atn); Matrix_Free(&Att);
+    Matrix_Free(&I);
 }
 
 void Phys_Init()
@@ -161,7 +237,7 @@ void Phys_Init()
         .j = 1,
         .normal = {s_theta, -c_theta},
         .tangent = {-c_theta, -s_theta},
-        .mu = 1.f,
+        .mu = 0.25f,
 
         .pos = {500 + 25 * s_theta, 500 - 25 * c_theta}
     };
@@ -171,7 +247,7 @@ void Phys_Init()
         .j = 2,
         .normal = {s_theta, -c_theta},
         .tangent = {-c_theta, -s_theta},
-        .mu = 1.f,
+        .mu = 0.25f,
 
         .pos = {500 + 75 * s_theta, 500 - 75 * c_theta}
     };
@@ -180,6 +256,7 @@ void Phys_Init()
     Solve(&x);
     for (int i = 0; i < N_CONTACTS; i++) {
         contacts[i].normal_force = MATRIX_AT(x, i, 0);
+        contacts[i].tangent_force = MATRIX_AT(x, i + N_CONTACTS, 0) - MATRIX_AT(x, i + 2*N_CONTACTS, 0);
     }
     Matrix_Free(&x);
 }
