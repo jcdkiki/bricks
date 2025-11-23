@@ -3,9 +3,9 @@
 
 #include <math.h>
 
-typedef struct {
+struct Vec2 {
     double x, y;
-} Vec2;
+};
 
 static inline Vec2 Vec2_Add(Vec2 a, Vec2 b) { return (Vec2) { a.x + b.x, a.y + b.y }; }
 static inline Vec2 Vec2_Sub(Vec2 a, Vec2 b) { return (Vec2) { a.x - b.x, a.y - b.y }; }
@@ -15,9 +15,9 @@ static inline double Vec2_Length(Vec2 v) { return sqrtf(v.x * v.x + v.y * v.y); 
 static inline Vec2 Vec2_Normalize(Vec2 v) { return Vec2_Scale(v, 1.0f / Vec2_Length(v)); }
 static inline double Vec2_Cross(Vec2 a, Vec2 b) { return a.x * b.y - a.y * b.x; }
 
-typedef struct {
+struct Vec3 {
     double x, y, z;
-} Vec3;
+};
 
 static inline double Vec3_Dot(Vec3 a, Vec3 b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 static inline Vec3 Vec3_Add(Vec3 a, Vec3 b) { return (Vec3){a.x+b.x, a.y+b.y, a.z+b.z}; }
@@ -41,10 +41,10 @@ static inline Vec3 Vec3_Cross(Vec3 a, Vec3 b) {
 
 #define MATRIX_AT(mat, row, col) ((mat).data[(row) * (mat).cols + (col)])
 
-typedef struct {
+struct Matrix {
     int rows, cols;
     double *data;
-} Matrix;
+};
 
 void Matrix_Free(Matrix *mat);
 void Matrix_Init(Matrix *mat, int rows, int cols);

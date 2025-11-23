@@ -6,7 +6,7 @@ void Matrix_Init(Matrix *mat, int rows, int cols)
 {
     mat->rows = rows;
     mat->cols = cols;
-    mat->data = calloc(rows * cols, sizeof(double));
+    mat->data = (double*)calloc(rows * cols, sizeof(double));
 }
 
 void Matrix_Mul(Matrix *A, Matrix *B, Matrix *res)
