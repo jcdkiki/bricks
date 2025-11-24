@@ -56,4 +56,15 @@ void Matrix_Put(Matrix *mat, Matrix *src, int row, int col);
 void Matrix_Print(Matrix *mat);
 void Matrix_PrintTransposed(Matrix *mat);
 
+static inline void Matrix_Negate(Matrix *A)
+{
+    for (int i = 0; i < A->rows * A->cols; i++) {
+        A->data[i] = -A->data[i];
+    }
+}
+
+struct Vec4 {
+    double x, y, z, w;
+};
+
 #endif

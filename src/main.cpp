@@ -12,14 +12,17 @@ GLFWwindow* window;
 
 void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
 {
-    double xpos, ypos;
-    glfwGetCursorPos(window, &xpos, &ypos);
-    Render_OnMouse(button, action, mods, xpos, ypos);
+    Render_OnMouse(button, action, mods);
 }
 
 void keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     Render_OnKey(key, action, mods);
+}
+
+void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+    Render_OnScroll(xoffset, yoffset);
 }
 
 int main(void)
@@ -39,6 +42,7 @@ int main(void)
     glfwMakeContextCurrent(window);
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetKeyCallback(window, keyCallback);
+    glfwSetScrollCallback(window, scrollCallback);
 
     if (!gladLoadGL()) {
         glfwTerminate();
@@ -47,7 +51,7 @@ int main(void)
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
     ImGui::StyleColorsDark();
@@ -56,23 +60,20 @@ int main(void)
     style.FontScaleDpi = main_scale;
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     ImGui_ImplOpenGL2_Init();
-
+    
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
 
-    float tick_time = glfwGetTime();
+    float last_time = glfwGetTime();
 
     while (!glfwWindowShouldClose(window)) {
+        float current_time = glfwGetTime();
+        float dt = current_time - last_time;
+        last_time = current_time;
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glMatrixMode(GL_PROJECTION);
-        glLoadIdentity();
-        glOrtho(0, WIN_WIDTH, WIN_HEIGHT, 0, -1, 1);
-        glMatrixMode(GL_MODELVIEW);
-        glLoadIdentity();
-
+        Render_UpdateCamera(dt);
         Render_Draw();
-
-        glEnable(GL_DEPTH_TEST);
 
         glfwSwapBuffers(window);
         glfwPollEvents();

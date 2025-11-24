@@ -4,27 +4,32 @@
 #include "linalg.h"
 #include <vector>
 
+#define N_TANGENTS 2
+
+#define AXIS_NORMAL 0
+#define AXIS_TANGENT1 1
+#define AXIS_TANGENT2 2
+
 struct Contact {
     int i, j;
     double mu;
 
-    double angle;
-    Vec2 normal;
-    Vec2 tangent;
+    Vec3 axes[N_TANGENTS + 1];
 
-    Vec2 pos;
+    Vec3 pos;
+    Vec3 angles;
 
-    double normal_force;
-    double tangent_force;
+    double res_normal_force;
+    Vec3 res_tangent_force;
 };
 
 struct Body {
     double mass;
-    Vec2 accel;
+    Vec3 accel;
 
-    Vec2 center;
-    Vec2 size;
-    double angle;
+    Vec3 center;
+    Vec3 size;
+    Vec3 euler;
 };
 
 extern std::vector<Body> bodies;

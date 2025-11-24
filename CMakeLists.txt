@@ -9,6 +9,7 @@ FetchContent_Declare(
     glfw
     URL https://github.com/glfw/glfw/archive/refs/tags/3.4.tar.gz
 )
+FetchContent_MakeAvailable(glfw)
 
 FetchContent_Declare(imgui_external
     URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.5.tar.gz
@@ -16,6 +17,12 @@ FetchContent_Declare(imgui_external
 	EXCLUDE_FROM_ALL
 )
 FetchContent_MakeAvailable(imgui_external)
+
+FetchContent_Declare(
+    googletest
+    URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip
+)
+FetchContent_MakeAvailable(googletest)
 
 add_library(imgui
 	${imgui_external_SOURCE_DIR}/imgui.cpp
@@ -28,8 +35,6 @@ add_library(imgui
 target_include_directories(imgui PUBLIC ${imgui_external_SOURCE_DIR})
 target_link_libraries(imgui PUBLIC -lGL)
 
-FetchContent_MakeAvailable(glfw)
-
 add_executable(bricks
     src/main.cpp
     src/glad.c
@@ -39,5 +44,15 @@ add_executable(bricks
     src/render.cpp
 )
 
+add_executable(
+    bricks_tests 
+    src/linalg.cpp
+    src/lemke.cpp
+    test/test_lcp.cpp
+)
+
 target_link_libraries(bricks PRIVATE glfw imgui)
 target_include_directories(bricks PRIVATE "./include")
+target_include_directories(bricks_tests PRIVATE "./include")
+target_link_libraries(bricks_tests PRIVATE gtest gtest_main)
+add_test(NAME bricks_tests COMMAND run_tests)
