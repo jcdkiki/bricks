@@ -150,7 +150,7 @@ int pivot_selection_lemke(double* mat, unsigned dim, unsigned drive, unsigned au
         } else {
           double current_pivot = mat[block + drive * dim];
           for (unsigned j = 1; j <= dim; ++j) {
-            assert(block >= 0 && "ratio_selection_lemke: block < 0");
+            //assert(block >= 0 && "ratio_selection_lemke: block < 0");
             dblock = mat[block + j * dim] * candidate_pivot - mat[i + j * dim] * current_pivot;
             
             if (dblock < 0.)
@@ -236,7 +236,6 @@ void lcp_pivot_covering_vector(LinearComplementarityProblem* problem, double* u,
 
   /* Pivot < mu , drive >  or < drive, drive > */
 
-  printf("Pivoting %i and %i\n", block, drive);
   pivot = mat[block + drive * dim];
 
   /* update matrix */
@@ -246,8 +245,6 @@ void lcp_pivot_covering_vector(LinearComplementarityProblem* problem, double* u,
   /** one basic u is leaving and mu enters the basis */
   leaving = basis[block];
   basis[block] = drive;
-
-  printf("leaving variable = %d\n", leaving);
 
   while (nb_iter < itermax && !has_sol) {
     ++nb_iter;
@@ -261,8 +258,6 @@ void lcp_pivot_covering_vector(LinearComplementarityProblem* problem, double* u,
       drive = leaving - (dim + 1);
     }
     block = pivot_selection_lemke(mat, dim, drive, aux_indx);
-
-    printf("Blocking variable: %d\tDriving variable: %d\n", block, drive);
 
     if (block < 0) {
       /* We stop here: it either mean that the algorithm stops here or that there
@@ -291,13 +286,13 @@ void lcp_pivot_covering_vector(LinearComplementarityProblem* problem, double* u,
       }
     }
 
-    printf("driving variable %i \n", drive);
+    // printf("driving variable %i \n", drive);
     if (basis[block] == (int)dim + 1) {
       has_sol = 1;
     }
 
     /* Pivot < block , drive > */
-    printf("Pivoting %i and %i\n", block, drive);
+    // printf("Pivoting %i and %i\n", block, drive);
 
     pivot = mat[block + drive * dim];
 

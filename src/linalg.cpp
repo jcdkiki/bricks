@@ -79,7 +79,7 @@ void Matrix_Print(Matrix *mat)
 {
     for (int i = 0; i < mat->rows; i++) {
         for (int j = 0; j < mat->cols; j++) {
-            printf("%f ", MATRIX_AT(*mat, i, j));
+            printf("%4.01lf ", MATRIX_AT(*mat, i, j));
         }
         printf("\n");
     }
@@ -89,7 +89,7 @@ void Matrix_PrintTransposed(Matrix *mat)
 {
     for (int i = 0; i < mat->cols; i++) {
         for (int j = 0; j < mat->rows; j++) {
-            printf("%f ", MATRIX_AT(*mat, j, i));
+            printf("%4.01lf ", MATRIX_AT(*mat, j, i));
         }
         printf("\n");
     }

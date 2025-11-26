@@ -4,6 +4,7 @@ project(bricks)
 include(FetchContent)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+add_compile_options(-O3)
 
 FetchContent_Declare(
     glfw
@@ -33,7 +34,7 @@ add_library(imgui
     ${imgui_external_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
 )
 target_include_directories(imgui PUBLIC ${imgui_external_SOURCE_DIR})
-target_link_libraries(imgui PUBLIC -lGL)
+target_link_libraries(imgui PUBLIC -lGL glfw)
 
 add_executable(bricks
     src/main.cpp
@@ -51,8 +52,17 @@ add_executable(
     test/test_lcp.cpp
 )
 
+add_executable(
+    gen_bricks 
+    src/gen_bricks.cpp
+    src/physics.cpp
+    src/linalg.cpp
+    src/lemke.cpp
+)
+
 target_link_libraries(bricks PRIVATE glfw imgui)
 target_include_directories(bricks PRIVATE "./include")
 target_include_directories(bricks_tests PRIVATE "./include")
+target_include_directories(gen_bricks PRIVATE "./include")
 target_link_libraries(bricks_tests PRIVATE gtest gtest_main)
 add_test(NAME bricks_tests COMMAND run_tests)

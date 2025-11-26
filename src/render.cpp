@@ -5,6 +5,7 @@
 #include <cmath>
 #include <GLFW/glfw3.h>
 #include <string>
+#include <filesystem>
 
 #include "linalg.h"
 #include "physics.h"
@@ -60,6 +61,8 @@ struct Transform {
     Vec2 start_mouse_pos;
 };
 
+std::vector<std::string> filenames;
+
 static bool inited = false;
 static OrthoView ortho_views[3];
 FrameBuffer *fb_perspective = nullptr;
@@ -90,38 +93,78 @@ struct Settings {
     char filename[128] { "examples/1.bin" };
     int selected_body { -1 };
     int selected_contact { -1 };
-    MoveMode move_mode { MoveMode::TRANSLATE };
 
     bool wireframe;
     
     double snap { 1 };
     bool snap_enabled { true };
+
+    bool animate;
+    double time = 0;
+
+    bool less_arrows { false };
+    bool show_input_rel_accel { false };
+
+    bool highlight_selected { true };
 };
 
 static Settings settings;
 
-static Vec3 SnapCoords(Vec3 coords)
+void MakePerspectiveProj(float *res)
 {
-    double s = settings.snap;
+    float aspect = view_size.x / view_size.y;
+    float fov = FOV * M_PI / 180.0f;
+    float f = 1.0f / tan(fov / 2.0f);
+    float near = 0.1f, far = 1000.0f;
+    memset(res, 0, sizeof(float) * 16);
+    res[0] = f/aspect;
+    res[5] = f;
+    res[10] = (far+near)/(near-far);
+    res[11] = -1;
+    res[14] = (2*far*near)/(near-far);
+}
+
+void Make3DView(float *res)
+{
+    Vec3 target = Vec3_Add(camera.pos, camera.forward);
+    res[0] = camera.right.x; res[1] = camera.up.x; res[2] = -camera.forward.x; res[3] = 0;
+    res[4] = camera.right.y; res[5] = camera.up.y; res[6] = -camera.forward.y; res[7] = 0;
+    res[8] = camera.right.z; res[9] = camera.up.z; res[10] = -camera.forward.z; res[11] = 0;
+    res[12] = -Vec3_Dot(camera.right, camera.pos);
+    res[13] = -Vec3_Dot(camera.up, camera.pos);
+    res[14] = Vec3_Dot(camera.forward, camera.pos);
+    res[15] = 1;
+}
+
+void MakeOrthoProj(float *proj, float scale = 10)
+{
+    float aspect = view_size.x / view_size.y;
+    float right = scale*aspect;
+    float left = -scale*aspect;
+    float top = scale;
+    float bottom = -scale;
+    float far = 1000;
+    float near = -1000;
+    memset(proj, 0, sizeof(float)*16);
+    proj[0] = 2/(right-left);
+    proj[3] = -(right+left)/(right-left);
+    proj[5] = 2/(top-bottom);
+    proj[7] = -(top+bottom)/(top-bottom);
+    proj[10] = -2/(far-near);
+    proj[11] = -(far+near)/(far-near);
+    proj[15] = 1;
+}
+
+static Vec3 SnapCoords(Vec3 coords, float s)
+{
     if (settings.snap_enabled)
         return { roundf(coords.x / s) * s, roundf(coords.y / s) * s, roundf(coords.z / s) * s };
     return coords;
 }
 
-static Vec3 ScreenToNDC(double x, double y)
+static Vec3 SnapCoords(Vec3 coords)
 {
-    return {
-        (x - MENU_WIDTH) / view_size.x * 2.0 - 1.0,
-        1.0 - y / view_size.y * 2.0,
-        0.0
-    };
-}
-
-static Vec3 NDCToView(Vec3 ndc)
-{
-    float fov_tan = tan(FOV * M_PI / 180.0f / 2.0f);
-    float aspect = (float)WIN_WIDTH / WIN_HEIGHT;
-    return {ndc.x * fov_tan * aspect, ndc.y * fov_tan, -1.0f};
+    return SnapCoords(coords, settings.snap);
 }
 
 static Vec3 ViewToWorld(Vec3 view_dir)
@@ -155,14 +198,61 @@ static Vec3 ClipToScreen(Vec3 clip)
     };
 }
 
-static bool Click3DPoint(Vec3 point, Vec3 origin, Vec3 dir, double radius = 0.5)
+#define VIEW_NONE -2
+#define VIEW_PERSPECTIVE -1
+#define VIEW_ORTHO 0
+
+int GetViewIdx()
 {
-    Vec3 to_point = Vec3_Sub(point, origin);
-    float proj = Vec3_Dot(to_point, dir);
-    if (proj <= 0) return false;
+    if (last_mouse_x > MENU_WIDTH && last_mouse_x < MENU_WIDTH+view_size.x) {
+        if (last_mouse_y > view_size.y) return VIEW_ORTHO + 1;
+        return VIEW_PERSPECTIVE;
+    }
+    else if (last_mouse_x > MENU_WIDTH+view_size.x) {
+        if (last_mouse_y > view_size.y) return VIEW_ORTHO + 2;
+        return VIEW_ORTHO + 0;
+    }
+    return VIEW_NONE;
+}
+
+Vec3 Matrix4x4MulVec3(float *mat, Vec3 vec)
+{
+    double w = mat[3] * vec.x + mat[7] * vec.y + mat[11] * vec.z + mat[15];
+    return {
+        (mat[0] * vec.x + mat[4] * vec.y + mat[8] * vec.z + mat[12]) / w,
+        (mat[1] * vec.x + mat[5] * vec.y + mat[9] * vec.z + mat[13]) / w,
+        (mat[2] * vec.x + mat[6] * vec.y + mat[10] * vec.z + mat[14]) / w
+    };
+}
+
+static bool Click3DPoint(Vec3 point, double *dist, double radius = 0.5)
+{
+    int idx = GetViewIdx();
+    if (idx != VIEW_PERSPECTIVE) return false;
     
-    Vec3 closest = Vec3_Add(origin, Vec3_Scale(dir, proj));
-    return Vec3_Length(Vec3_Sub(point, closest)) < radius;
+    double mx = fmod(last_mouse_x - MENU_WIDTH, view_size.x);
+    double my = fmod(last_mouse_y, view_size.y);
+
+    float proj[16];
+    float view_mat[16];
+    MakePerspectiveProj(proj);
+    Make3DView(view_mat);
+    Vec3 ndc_point = Matrix4x4MulVec3(proj, Matrix4x4MulVec3(view_mat, point));
+    ndc_point.z = 0;
+
+    // TODO: calc once per frame
+    Vec3 ndc_mouse = {
+        mx / view_size.x * 2 - 1,
+        -(my / view_size.y * 2 - 1),
+        0
+    };
+
+    printf("ndc_point: %lf %lf %lf\n", ndc_point.x, ndc_point.y, ndc_point.z);
+    printf("ndc_mouse: %lf %lf %lf\n", ndc_mouse.x, ndc_mouse.y, ndc_mouse.z);
+
+    // TODO: make dist^2
+    *dist = Vec3_Length(Vec3_Sub(ndc_mouse, ndc_point));
+    return *dist < radius;
 }
 
 static void DrawArrow(Vec3 p, Vec3 dir)
@@ -186,19 +276,6 @@ static void UpdateCameraVectors()
     camera.up = Vec3_Normalize(Vec3_Cross(camera.right, camera.forward));
 }
 
-int GetViewIdx()
-{
-    int view_idx = -1;
-    if (last_mouse_x > MENU_WIDTH && last_mouse_x < MENU_WIDTH+view_size.x) {
-        if (last_mouse_y > view_size.y) view_idx = 1;
-    }
-    else if (last_mouse_x > MENU_WIDTH+view_size.x) {
-        if (last_mouse_y > view_size.y) view_idx = 2;
-        else view_idx = 0;
-    }
-    return view_idx;
-}
-
 void MoveCamera()
 {
     if (!right_mouse_down) {
@@ -206,7 +283,7 @@ void MoveCamera()
     }
 
     int idx = GetViewIdx();
-    if (idx == -1) {
+    if (idx == VIEW_PERSPECTIVE) {
         float sensitivity = 0.003f;
         camera.yaw += mouse_dx * sensitivity;
         camera.pitch -= mouse_dy * sensitivity;
@@ -221,18 +298,23 @@ void MoveCamera()
     }
 }
 
-void DrawGrid(Vec3 a1, Vec3 a2, Vec3 center, int a1_count = 10, int a2_count = 10)
+void DrawGrid(Vec3 a1, Vec3 a2, Vec3 center, int a1_len = 10, int a2_len = 10, double gap = 1)
 {
+    a1 = Vec3_Scale(a1, gap);
+    a2 = Vec3_Scale(a2, gap);
+    a1_len = (double)a1_len / gap;
+    a2_len = (double)a2_len / gap;
+
     glLineWidth(1.f);
     glColor4f(1.f, 1.f, 1.f, 0.1f);
     glBegin(GL_LINES);
-    for (int i = -a1_count; i < a1_count; i++) {
-        glVertex3f(center.x + a1.x*i + a2.x*10, center.y + a1.y*i + a2.y*10, center.z + a1.z*i + a2.z*10);
-        glVertex3f(center.x + a1.x*i - a2.x*10, center.y + a1.y*i - a2.y*10, center.z + a1.z*i - a2.z*10);
+    for (int i = -a1_len; i < a1_len; i++) {
+        glVertex3f(center.x + a1.x*i + a2.x*a2_len, center.y + a1.y*i + a2.y*a2_len, center.z + a1.z*i + a2.z*a2_len);
+        glVertex3f(center.x + a1.x*i - a2.x*a2_len, center.y + a1.y*i - a2.y*a2_len, center.z + a1.z*i - a2.z*a2_len);
     }
-    for (int i = -a2_count; i < a2_count; i++) {
-        glVertex3f(center.x + a2.x*i + a1.x*10, center.y + a2.y*i + a1.y*10, center.z + a2.z*i + a1.z*10);
-        glVertex3f(center.x + a2.x*i - a1.x*10, center.y + a2.y*i - a1.y*10, center.z + a2.z*i - a1.z*10);
+    for (int i = -a2_len; i < a2_len; i++) {
+        glVertex3f(center.x + a2.x*i + a1.x*a1_len, center.y + a2.y*i + a1.y*a1_len, center.z + a2.z*i + a1.z*a1_len);
+        glVertex3f(center.x + a2.x*i - a1.x*a1_len, center.y + a2.y*i - a1.y*a1_len, center.z + a2.z*i - a1.z*a1_len);
     }
     glEnd();
 }
@@ -242,7 +324,7 @@ void MoveBody()
     if (cur_transform.mode == MoveMode::NONE) return;
 
     int view_idx = GetViewIdx();
-    if (view_idx == -1) return;
+    if (view_idx == VIEW_PERSPECTIVE) return;
     OrthoView &v = ortho_views[view_idx];
     Vec3 a1 = v.axes[0];
     Vec3 a2 = v.axes[1];
@@ -250,8 +332,8 @@ void MoveBody()
     double mul = 0.05;
     if (cur_transform.mode == MoveMode::SCALE) mul *= 2.f;
 
-    double dx = (last_mouse_x - cur_transform.start_mouse_pos.x) * mul * v.scale;
-    double dy = (last_mouse_y - cur_transform.start_mouse_pos.y) * -mul * v.scale;
+    double dx = (last_mouse_x - cur_transform.start_mouse_pos.x) * mul;
+    double dy = (last_mouse_y - cur_transform.start_mouse_pos.y) * -mul;
 
     if (keys[GLFW_KEY_LEFT_SHIFT] == GLFW_PRESS) {
         if (fabs(dx) > fabs(dy)) dy = 0;
@@ -259,12 +341,12 @@ void MoveBody()
     }
 
     
-    if (cur_transform.mode != MoveMode::ROTATE) {
+    if (cur_transform.var != nullptr && cur_transform.mode != MoveMode::ROTATE) {
         *cur_transform.var = Vec3_Add(cur_transform.old_var,
-            Vec3_Add(Vec3_Scale(a1, dx), Vec3_Scale(a2, dy)));
+            Vec3_Add(Vec3_Scale(a1, dx * v.scale), Vec3_Scale(a2, dy * v.scale)));
         *cur_transform.var = SnapCoords(*cur_transform.var);
     }
-    else {
+    else if (cur_transform.var != nullptr) {
         Vec3 a = Vec3_Sub({1, 1, 1}, Vec3_Add(a1, a2));
         *cur_transform.var = Vec3_Add(cur_transform.old_var, Vec3_Scale(a, dx));
     }
@@ -281,6 +363,10 @@ void Render_UpdateCamera(double dt)
     if (keys[GLFW_KEY_S]) camera.pos = Vec3_Sub(camera.pos, Vec3_Scale(camera.forward, speed));
     if (keys[GLFW_KEY_A]) camera.pos = Vec3_Sub(camera.pos, Vec3_Scale(camera.right, speed));
     if (keys[GLFW_KEY_D]) camera.pos = Vec3_Add(camera.pos, Vec3_Scale(camera.right, speed));
+
+    if (settings.animate) {
+        settings.time += dt;
+    }
 }
 
 static void DrawBoxShaded(Vec3 center, Vec3 size, Vec3 euler, Vec3 color)
@@ -385,11 +471,13 @@ Vec3 GetBodyAccel(int i)
         Contact &c = contacts[j];
         if (c.j == i) {
             accel = Vec3_Add(accel, Vec3_Scale(c.axes[AXIS_NORMAL], c.res_normal_force / mass));
-            accel = Vec3_Add(accel, Vec3_Scale(c.res_tangent_force, 1.0 / mass));
+            for (int k = 0; k < N_TANGENTS; k++)
+                accel = Vec3_Add(accel, Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k] / mass));
         }
         else if (c.i == i) {
             accel = Vec3_Sub(accel, Vec3_Scale(c.axes[AXIS_NORMAL], c.res_normal_force / mass));
-            accel = Vec3_Sub(accel, Vec3_Scale(c.res_tangent_force, 1.0 / mass));
+            for (int k = 0; k < N_TANGENTS; k++)
+                accel = Vec3_Sub(accel, Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k] / mass));
         }
     }
     return accel;
@@ -481,7 +569,7 @@ void Show_View(FrameBuffer *fb, int px, int py, const char *name)
 void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
 {
     glViewport(0, 0, view_size.x, view_size.y);
-    glClearColor(0.f, 0.f, 0.f, 1.f);
+    glClearColor(33.0f / 255.f, 37.0f / 255.f, 43.0f / 255.f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     UpdateCameraVectors();
@@ -503,10 +591,16 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
     
     for (int i = 0; i < bodies.size(); i++) {
         Vec3 color = body_colors[i % N_BODY_COLORS];
-        if (i == settings.selected_body) {
+        if (i == settings.selected_body && settings.highlight_selected) {
             color = {1, 1, 0};
         }
-        DrawBox(bodies[i].center, bodies[i].size, bodies[i].euler, color);
+
+        Vec3 center = bodies[i].center;
+        if (settings.animate) {
+            center = Vec3_Add(center, Vec3_Scale(GetBodyAccel(i), settings.time*settings.time*0.5));
+        }
+
+        DrawBox(center, bodies[i].size, bodies[i].euler, color);
     }
 
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -522,15 +616,10 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         Vec3 T0 = {cy*cz, cy*sz, -sy};
         Vec3 T1 = Vec3_Cross(T0, c.axes[AXIS_NORMAL]);
         
-        //printf("------\n");
-        //printf("T0: %lf %lf %lf\n", T0.x, T0.y, T0.z);
-        //printf("T1: %lf %lf %lf\n", T1.x, T1.y, T1.z);
-        
         for (int i = 0; i < N_TANGENTS; i++) {
             double alpha = i * M_PI / (double)N_TANGENTS;
             double cs = cos(alpha), sn = sin(alpha);
             c.axes[AXIS_TANGENT1 + i] = Vec3_Add(Vec3_Scale(T0, cs), Vec3_Scale(T1, sn));
-            //printf("t%d: %lf %lf %lf\n", i, c.axes[AXIS_TANGENT1 + i].x, c.axes[AXIS_TANGENT1 + i].y, c.axes[AXIS_TANGENT1 + i].z);
         }
 
         for (int i = 0; i < N_TANGENTS+1; i++) {
@@ -542,13 +631,17 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
     if (settings.show_input_forces) {
         glColor3f(1.f, 0.3f, 0.3f);
         for (int i = 0; i < bodies.size(); i++) {
+            if (settings.less_arrows && i != settings.selected_body) continue;
             Body *b = &bodies[i];
             if (Vec3_Length(b->accel) > 1e-6)
                 DrawArrow(b->center, b->accel);
         }
-    
+    }
+
+    if (settings.show_input_rel_accel) {
         glColor3f(0.3f, 1.f, 0.3f);
         for (int i = 0; i < contacts.size(); i++) {
+            if (settings.less_arrows && i != settings.selected_contact) continue;
             Contact *c = &contacts[i];
             Vec3 rel_accel = Vec3_Sub(bodies[c->j].accel, bodies[c->i].accel);
             if (Vec3_Length(rel_accel) > 1e-6)
@@ -559,17 +652,23 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
     if (settings.show_output_forces) {
         glColor3f(1.f, 1.f, 0.3f);
         for (int i = 0; i < contacts.size(); i++) {
+            if (settings.less_arrows && i != settings.selected_contact) continue;
             Contact *c = &contacts[i];
             if (fabs(c->res_normal_force) > 1e-4)
                 DrawArrow(c->pos, Vec3_Scale(c->axes[AXIS_NORMAL], c->res_normal_force));
-            if (Vec3_Length(c->res_tangent_force) > 1e-4)
-                DrawArrow(c->pos, c->res_tangent_force);
+
+            for (int j = 0; j < N_TANGENTS; j++) {
+                if (fabs(c->res_tangent_force[j]) > 1e-4) {
+                    DrawArrow(c->pos, Vec3_Scale(c->axes[AXIS_TANGENT1 + j], c->res_tangent_force[j]));
+                }
+            }
         }
     }
 
     if (settings.show_total_forces) {
         glColor3f(1.f, 1.f, 1.f);
         for (int i = 0; i < bodies.size(); i++) {
+            if (settings.less_arrows && i != settings.selected_body) continue;
             Body *b = &bodies[i];
             Vec3 accel = GetBodyAccel(i);
             if (Vec3_Length(accel) > 1e-6f) DrawArrow(b->center, accel);
@@ -579,6 +678,7 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
     if (settings.show_rel_accel) {
         glColor3f(1.f, 1.f, 1.f);
         for (int i = 0; i < contacts.size(); i++) {
+            if (settings.less_arrows && i != settings.selected_contact) continue;
             Contact &c = contacts[i];
             Vec3 i_accel = GetBodyAccel(c.i);
             Vec3 j_accel = GetBodyAccel(c.j);
@@ -590,7 +690,7 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
 
     if (settings.show_axes) {
         for (int i = 0; i < contacts.size(); i++) {
-            if (settings.selected_contact == i) {
+            if (settings.selected_contact == i && settings.highlight_selected) {
                 glColor3f(1.f, 1.f, 0.f);
                 glLineWidth(4.f);
             }
@@ -603,7 +703,7 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
             glBegin(GL_LINES);
             for (int j = 0; j < N_TANGENTS+1; j++) {
                 Vec3 v = Vec3_Scale(c->axes[j], 0.25);
-                glVertex3f(c->pos.x - v.x, c->pos.y - v.y, c->pos.z - v.z);
+                glVertex3f(c->pos.x, c->pos.y, c->pos.z);
                 glVertex3f(c->pos.x + v.x, c->pos.y + v.y, c->pos.z + v.z);
             }
             glEnd();
@@ -615,24 +715,9 @@ void Render_Perspective()
 {
     settings.wireframe = false;
 
-    float aspect = view_size.x / view_size.y;
-    float fov = FOV * M_PI / 180.0f;
-    float f = 1.0f / tan(fov / 2.0f);
-    float near = 0.1f, far = 1000.0f;
-    float proj[16] = {
-        f/aspect, 0, 0, 0,
-        0, f, 0, 0,
-        0, 0, (far+near)/(near-far), -1,
-        0, 0, (2*far*near)/(near-far), 0
-    };
-
-    Vec3 target = Vec3_Add(camera.pos, camera.forward);
-    float view[16] = {
-        (float)camera.right.x, (float)camera.up.x, (float)-camera.forward.x, 0,
-        (float)camera.right.y, (float)camera.up.y, (float)-camera.forward.y, 0,
-        (float)camera.right.z, (float)camera.up.z, (float)-camera.forward.z, 0,
-        (float)-Vec3_Dot(camera.right, camera.pos), (float)-Vec3_Dot(camera.up, camera.pos), (float)Vec3_Dot(camera.forward, camera.pos), 1
-    };
+    float proj[16], view[16];
+    MakePerspectiveProj(proj);
+    Make3DView(view);
 
     fb_perspective->Bind();
     Render_Scene(fb_perspective, proj, view);
@@ -643,8 +728,11 @@ void Render_Perspective()
             Vec3 clip = WorldToClip(bodies[i].center, view, proj);
             if (clip.z > 0) {
                 Vec3 screen = ClipToScreen(clip);
-                if (screen.x >= MENU_WIDTH && screen.y >= 0 && screen.x < MENU_WIDTH+view_size.x && screen.y < view_size.y)
-                    draw_list->AddText(ImVec2(screen.x, screen.y), 0xFFFFFFFF, std::to_string(i).c_str());
+                if (screen.x >= MENU_WIDTH && screen.y >= 0 && screen.x < MENU_WIDTH+view_size.x && screen.y < view_size.y) {
+                    std::string s = std::to_string(i);
+                    ImVec2 sz = ImGui::CalcTextSize(s.c_str());
+                    draw_list->AddText(ImVec2(screen.x - sz.x, screen.y - sz.y), 0xFFFFFFFF, s.c_str());
+                }
             }
         }
     }
@@ -652,39 +740,11 @@ void Render_Perspective()
     fb_perspective->Unbind();
 }
 
-void Ortho_Proj(float *proj, float scale = 10)
-{
-    float aspect = view_size.x / view_size.y;
-    float right = scale*aspect;
-    float left = -scale*aspect;
-    float top = scale;
-    float bottom = -scale;
-    float far = 1000;
-    float near = -1000;
-    proj[0] = 2/(right-left);
-    proj[1] = 0;
-    proj[2] = 0;
-    proj[3] = -(right+left)/(right-left);
-    proj[4] = 0;
-    proj[5] = 2/(top-bottom);
-    proj[6] = 0;
-    proj[7] = -(top+bottom)/(top-bottom);
-    proj[8] = 0;
-    proj[9] = 0;
-    proj[10] = -2/(far-near);
-    proj[11] = -(far+near)/(far-near);
-    proj[12] = 0;
-    proj[13] = 0;
-    proj[14] = 0;
-    proj[15] = 1;
-
-    settings.wireframe = true;
-}
-
 void Render_Ortho(OrthoView &view)
 {
     float proj[16];
-    Ortho_Proj(proj, 10.0 * view.scale);
+    MakeOrthoProj(proj, 10.0 * view.scale);
+    settings.wireframe = true;
 
     float view_mat[16];
     memcpy(view_mat, view.view, sizeof(view_mat));
@@ -693,8 +753,52 @@ void Render_Ortho(OrthoView &view)
 
     view.fb->Bind();
     Render_Scene(view.fb, proj, view_mat);
-    DrawGrid(view.axes[0], view.axes[1], {0, 0, 0});
+    DrawGrid(view.axes[0], view.axes[1],
+        SnapCoords(
+            Vec3_Add(Vec3_Scale(view.axes[0], view.pos.x), Vec3_Scale(view.axes[1], view.pos.y)),
+            settings.snap_enabled ? settings.snap : 1
+        ),
+        20 * view.scale, 20 * view.scale,
+        settings.snap_enabled ? settings.snap : 1
+    );
     view.fb->Unbind();
+}
+
+void GetFilenames()
+{
+    filenames.clear();
+    try {
+        std::string path = "./examples"; // Путь к каталогу
+        for (const auto& entry : std::filesystem::directory_iterator(path)) {
+            filenames.push_back("examples/" + entry.path().filename().string());
+        }
+    } catch(std::exception &e) {
+        // ...
+    }
+}
+
+void DeleteBody()
+{
+    bodies.erase(bodies.begin() + settings.selected_body);
+            
+    for (auto it = contacts.begin(); it != contacts.end();) {
+        if (it->i == settings.selected_body || it->j == settings.selected_body) {
+            it = contacts.erase(it);
+        }
+        else {
+            if (it->i > settings.selected_body) it->i--;
+            if (it->j > settings.selected_body) it->j--;
+            it++;
+        }
+    }
+
+    settings.selected_body = -1;
+}
+
+void DeleteContact()
+{
+    contacts.erase(contacts.begin() + settings.selected_contact);
+    settings.selected_contact = -1;
 }
 
 void Render_Draw()
@@ -737,8 +841,9 @@ void Render_Draw()
             new FrameBuffer(view_size.x, view_size.y),
             {{0, 0, 1}, {0, 1, 0}}
         };
-
+        
         fb_perspective = new FrameBuffer(view_size.x, view_size.y);
+        GetFilenames();
     }
 
     ImGui_ImplOpenGL2_NewFrame();
@@ -758,23 +863,57 @@ void Render_Draw()
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(MENU_WIDTH, WIN_HEIGHT), ImGuiCond_Always);
     ImGui::Begin("Settings", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    if (ImGui::CollapsingHeader("Help")) {
+        ImGui::SeparatorText("3D view");
+        ImGui::Text("Right mouse button: look around");
+        ImGui::Text("  + WASD: move");
+        ImGui::Text("Left click: select body");
+        ImGui::Text("Shift + Left click: select contact point");
+        
+        ImGui::SeparatorText("2D view");
+        ImGui::Text("Right mouse button: move around");
+        ImGui::Text("Left mouse button: manipulate objects");
+        ImGui::Text("  + Shift: snap to the grid");
+        ImGui::Text("  + Alt: scale selected body");
+        ImGui::Text("  + Ctrl: rotate selected object");
+
+        ImGui::SeparatorText("Menu");
+        ImGui::Text("Self-explanatory");
+    }
     if (ImGui::CollapsingHeader("Show")) {
-        ImGui::Checkbox("ids", &settings.show_ids); ImGui::SameLine();
-        ImGui::Checkbox("axes", &settings.show_axes);
-        ImGui::Checkbox("input forces", &settings.show_input_forces);
-        ImGui::Checkbox("output forces", &settings.show_output_forces);
-        ImGui::Checkbox("total forces", &settings.show_total_forces);
-        ImGui::Checkbox("relative acceleration", &settings.show_rel_accel);
+        ImGui::Checkbox("Ids", &settings.show_ids); ImGui::SameLine();
+        ImGui::Checkbox("Axes", &settings.show_axes);
+        
+        ImGui::Text("Forces"); ImGui::SameLine();
+        ImGui::Checkbox("Input", &settings.show_input_forces); ImGui::SameLine();
+        ImGui::Checkbox("Output", &settings.show_output_forces); ImGui::SameLine();
+        ImGui::Checkbox("Total", &settings.show_total_forces);
+
+        ImGui::Text("Rel accel"); ImGui::SameLine();
+        ImGui::Checkbox("Input##in_rel", &settings.show_input_rel_accel); ImGui::SameLine();
+        ImGui::Checkbox("Result", &settings.show_rel_accel);
+
+        ImGui::Checkbox("Less arrows", &settings.less_arrows);
+        ImGui::Checkbox("Highlight selected", &settings.highlight_selected);
     }
     if (ImGui::CollapsingHeader("File")) {
         ImGui::InputText("Filename", settings.filename, sizeof(settings.filename));
     
+        ImGui::BeginListBox("Examples");
+        for (std::string &filename : filenames) {
+            if (ImGui::Selectable(filename.c_str(), settings.filename == filename)) {
+                strcpy(settings.filename, filename.c_str());
+            }
+        }
+        ImGui::EndListBox();
+
         if (ImGui::Button("Load")) {
             Phys_ReadFromFile(settings.filename);
         }
         ImGui::SameLine();
-        if (ImGui::Button("Save")) {
+        if (ImGui::Button("Save") && bodies.size() > 0) {
             Phys_SaveToFile(settings.filename);
+            GetFilenames();
         }
         ImGui::SameLine();
         if (ImGui::Button("New")) {
@@ -782,6 +921,7 @@ void Render_Draw()
             bodies.clear();
         }
     }
+
     if (ImGui::Button("Solve")) {
         Phys_Solve();
     }
@@ -798,11 +938,16 @@ void Render_Draw()
         if (ImGui::Button("ON")) settings.snap_enabled = true;
     }
 
-    ImGui::RadioButton("MOVE", (int*)&settings.move_mode, (int)MoveMode::TRANSLATE); ImGui::SameLine();
-    ImGui::RadioButton("ROT", (int*)&settings.move_mode, (int)MoveMode::ROTATE); ImGui::SameLine();
-    ImGui::RadioButton("SCALE", (int*)&settings.move_mode, (int)MoveMode::SCALE); ImGui::SameLine();
-    ImGui::RadioButton("NONE", (int*)&settings.move_mode, (int)MoveMode::NONE);
-    
+    if (settings.animate) {
+        if (ImGui::Button("Stop")) settings.animate = false;
+    }
+    else {
+        if (ImGui::Button("Play")) {
+            settings.animate = true;
+            settings.time = 0;
+        }
+    }
+
     ImGui::Separator();
     if (ImGui::Button("New contact point")) {
         Vec3 spawn_pos = Vec3_Add(camera.pos, Vec3_Scale(camera.forward, 5.0));
@@ -859,22 +1004,8 @@ void Render_Draw()
             b->accel = {0.0, -9.8, 0.0};
         }
 
-        if (ImGui::Button("Delete")) {
-            bodies.erase(bodies.begin() + settings.selected_body);
-            
-            for (auto it = contacts.begin(); it != contacts.end();) {
-                if (it->i == settings.selected_body || it->j == settings.selected_body) {
-                    it = contacts.erase(it);
-                }
-                else {
-                    if (it->i > settings.selected_body) it->i--;
-                    if (it->j > settings.selected_body) it->j--;
-                    it++;
-                }
-            }
-
-            settings.selected_body = -1;
-        }
+        if (ImGui::Button("Delete"))
+            DeleteBody();
     }
 
     if (settings.selected_contact != -1) {
@@ -900,17 +1031,16 @@ void Render_Draw()
         ImGui::InputDouble("##ec2", &c->angles.y); ImGui::NextColumn();
         ImGui::InputDouble("##ec3", &c->angles.z); ImGui::NextColumn();
         
-        ImGui::Text("res_ft"); ImGui::NextColumn();
-        ImGui::InputDouble("##ft1", &c->res_tangent_force.x); ImGui::NextColumn();
-        ImGui::InputDouble("##ft2", &c->res_tangent_force.y); ImGui::NextColumn();
-        ImGui::InputDouble("##ft3", &c->res_tangent_force.z); ImGui::NextColumn();
         ImGui::Columns();
         ImGui::InputDouble("normal force", &c->res_normal_force);
-
-        if (ImGui::Button("Delete")) {
-            contacts.erase(contacts.begin() + settings.selected_contact);
-            settings.selected_contact = -1;
+        double sum = 0;
+        for (int i = 0; i < N_TANGENTS; i++) {
+            sum += fabs(c->res_tangent_force[i]);
         }
+        ImGui::Text("tangent forces sum: %lf", sum);
+
+        if (ImGui::Button("Delete"))
+            DeleteContact();
     }
     
     ImGui::End();
@@ -944,43 +1074,31 @@ bool SelectBody(int button, int action, int mods)
     if (last_mouse_x < MENU_WIDTH) return false;
 
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
-        Vec3 ray_dir = ViewToWorld(NDCToView(ScreenToNDC(last_mouse_x, last_mouse_y)));
-        Vec3 ray_origin = camera.pos;
-
-        if (mods & GLFW_MOD_SHIFT) {
-            int closest = -1;
-            float closest_dist = 1e9;
-            for (int i = 0; i < contacts.size(); i++) {
-                if (Click3DPoint(contacts[i].pos, ray_origin, ray_dir)) {
-                    float dist = Vec3_Length(Vec3_Sub(contacts[i].pos, camera.pos));
-                    if (dist < closest_dist) {
-                        closest_dist = dist;
-                        closest = i;
-                    }
+        bool is_body = false;
+        int closest = -1;
+        float closest_dist = 1e9;
+        for (int i = 0; i < contacts.size(); i++) {
+            double dist;
+            if (Click3DPoint(contacts[i].pos, &dist)) {
+                if (dist < closest_dist) {
+                    closest_dist = dist;
+                    closest = i;
                 }
-            }
-            if (closest != -1) {
-                settings.selected_contact = closest;
-                settings.selected_body = -1;
             }
         }
-        else {
-            int closest = -1;
-            float closest_dist = 1e9;
-
-            for (int i = 0; i < bodies.size(); i++) {
-                if (Click3DPoint(bodies[i].center, ray_origin, ray_dir)) {
-                    float dist = Vec3_Length(Vec3_Sub(bodies[i].center, camera.pos));
-                    if (dist < closest_dist) {
-                        closest_dist = dist;
-                        closest = i;
-                    }
+        for (int i = 0; i < bodies.size(); i++) {
+            double dist;
+            if (Click3DPoint(bodies[i].center, &dist)) {
+                if (dist < closest_dist) {
+                    closest_dist = dist;
+                    closest = i;
+                    is_body = true;
                 }
             }
-            if (closest != -1) {
-                settings.selected_body = closest;
-                settings.selected_contact = -1;
-            }
+        }
+        if (closest != -1) {
+            if (is_body) { settings.selected_body = closest; settings.selected_contact = -1; }
+            else { settings.selected_contact = closest; settings.selected_body = -1; }
         }
         return true;
     }
@@ -997,12 +1115,18 @@ void BeginEndTransform(int button, int action, int mods)
     if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS)
         return;
 
-    if (settings.move_mode == MoveMode::NONE){
-        settings.move_mode = MoveMode::TRANSLATE;
+    MoveMode cur_mode = MoveMode::TRANSLATE;
+    if (keys[GLFW_KEY_LEFT_ALT]) {
+        cur_mode = MoveMode::SCALE;
+    }
+    else if (keys[GLFW_KEY_LEFT_CONTROL]) {
+        cur_mode = MoveMode::ROTATE;
     }
 
+    SelectBody(button, action, mods);
+
     if (settings.selected_body != -1) {
-        switch (settings.move_mode) {
+        switch (cur_mode) {
         case MoveMode::SCALE:
             cur_transform.old_var = bodies[settings.selected_body].size;
             cur_transform.var = &bodies[settings.selected_body].size;
@@ -1020,7 +1144,7 @@ void BeginEndTransform(int button, int action, int mods)
         }
     }
     else if (settings.selected_contact != -1) {
-        switch (settings.move_mode) {
+        switch (cur_mode) {
         case MoveMode::TRANSLATE:
             cur_transform.old_var = contacts[settings.selected_contact].pos;
             cur_transform.var = &contacts[settings.selected_contact].pos;
@@ -1035,7 +1159,7 @@ void BeginEndTransform(int button, int action, int mods)
         }
     }
 
-    cur_transform.mode = settings.move_mode;
+    cur_transform.mode = cur_mode;
     cur_transform.start_mouse_pos = { last_mouse_x, last_mouse_y };
 }
 
@@ -1062,11 +1186,14 @@ void Render_OnKey(int key, int action, int mods)
         case GLFW_KEY_ESCAPE:
             settings.selected_body = -1;
             settings.selected_contact = -1;
-            settings.move_mode = MoveMode::NONE;    
+            break;    
+        case GLFW_KEY_DELETE:
+            if (settings.selected_contact != -1) DeleteContact();
+            else if (settings.selected_body != -1) DeleteBody();
             break;
-        case GLFW_KEY_T: settings.move_mode = MoveMode::TRANSLATE; break;
-        case GLFW_KEY_R: settings.move_mode = MoveMode::ROTATE; break;
-        case GLFW_KEY_S: if (!right_mouse_down) settings.move_mode = MoveMode::SCALE; break;       
+        case GLFW_KEY_ENTER:
+            settings.animate = !settings.animate;
+            break;
         }   
     }
 }

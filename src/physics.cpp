@@ -1,9 +1,7 @@
 #include "physics.h"
 
+#include <cstring>
 #include <float.h>
-#include <glad/glad.h>
-#include <imgui.h>
-
 #include "linalg.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,17 +55,13 @@ void Phys_ReadFromFile(const char *filename)
     contacts.resize(n_contacts);
     fread(bodies.data(), sizeof(Body), n_bodies, f);
     
+    memset(contacts.data(), 0, n_contacts * sizeof(Contact));
     for (int i = 0; i < n_contacts; i++) {
         fread(&contacts[i].i, sizeof(int), 1, f);
         fread(&contacts[i].j, sizeof(int), 1, f);
         fread(&contacts[i].mu, sizeof(double), 1, f);
         fread(&contacts[i].pos, sizeof(Vec3), 1, f);
         fread(&contacts[i].angles, sizeof(Vec3), 1, f);  
-    }
-
-    for (int i = 0; i < n_contacts; i++) {
-        contacts[i].res_normal_force = 0.0;
-        contacts[i].res_tangent_force = {0.0, 0.0, 0.0};
     }
 }
 
@@ -88,13 +82,14 @@ void ProjectForces(Matrix *A, int axes, int forces)
                 MATRIX_AT(*A, k, l) = nk_nl / mi + nk_nl / mj;
             }
             else if (cl->j == ck->j) MATRIX_AT(*A, k, l) = nk_nl / mj;
-            else if (cl->i == ck->i) MATRIX_AT(*A, k, l) = nk_nl / mi;
             else if (cl->i == ck->j) MATRIX_AT(*A, k, l) = -nk_nl / mj;
+            else if (cl->i == ck->i) MATRIX_AT(*A, k, l) = nk_nl / mi;
             else if (cl->j == ck->i) MATRIX_AT(*A, k, l) = -nk_nl / mi;
         }
     }
 }
 
+/*
 static void Verify(Matrix *A, Matrix *b, Matrix *x)
 {
     int M = contacts.size();
@@ -112,9 +107,10 @@ static void Verify(Matrix *A, Matrix *b, Matrix *x)
         if (an * fn < -1e-6)
             printf("error in contact %d: f_n*a_n = %lf*%lf = %lf != 0\n", i, fn, an, fn*an);
 
+        int cur_row = M;
         for (int j = 0; j < N_TANGENTS; j++) {
-            int plus_row = M + 2*j*M + i;
-            int minus_row = M + (2*j+1)*M + i;
+            int plus_row = cur_row + i;
+            int minus_row = cur_row + M + i;
             double ft_plus = MATRIX_AT(*x, plus_row, 0);
             double ft_minus = MATRIX_AT(*x, minus_row, 0);
 
@@ -134,14 +130,17 @@ static void Verify(Matrix *A, Matrix *b, Matrix *x)
                 printf("error in contact %d tangent %d+: f_t*a_t = %lf*%lf = %lf != 0\n", i, j, ft_plus, at_plus, ft_plus*at_plus);
             if (at_minus * ft_minus > 1e-6)
                 printf("error in contact %d tangent %d-: f_t*a_t = %lf*%lf = %lf != 0\n", i, j, ft_minus, at_minus, ft_minus*at_minus);
+            
+            cur_row += 2*M;
         }
     }
-}
+}*/
 
 static void Solve(Matrix *x)
 {  
     int M = contacts.size();
     int MM = (2 + N_TANGENTS*2)*M;
+    int cur_row = 0;
 
     Matrix I;
     Matrix_Init(&I, M, M);
@@ -155,55 +154,60 @@ static void Solve(Matrix *x)
     // first
     Matrix Ann;
     ProjectForces(&Ann, AXIS_NORMAL, AXIS_NORMAL);
-    Matrix_Put(&A, &Ann, 0, 0);
+    Matrix_Put(&A, &Ann, cur_row, 0);
     for (int i = 0; i < N_TANGENTS; i++) {
         Matrix Ant;
         ProjectForces(&Ant, AXIS_NORMAL, AXIS_TANGENT1 + i);
-        Matrix_Put(&A, &Ant, 0, (i+1)*M);
+        Matrix_Put(&A, &Ant, cur_row, (i+1)*M);
         Matrix_Negate(&Ant);
-        Matrix_Put(&A, &Ant, 0, (1 + N_TANGENTS + i)*M);
+        Matrix_Put(&A, &Ant, cur_row, (1 + N_TANGENTS + i)*M);
+        Matrix_Free(&Ant);
     }
     Matrix_Free(&Ann);
+    cur_row += M;
 
     // mid
     for (int i = 0; i < N_TANGENTS; i++) {
         Matrix Atn;
         ProjectForces(&Atn, AXIS_TANGENT1 + i, AXIS_NORMAL);
-        Matrix_Put(&A, &Atn, 2*i*M + M, 0);
+        Matrix_Put(&A, &Atn, cur_row, 0);
         Matrix_Negate(&Atn);
-        Matrix_Put(&A, &Atn, 2*i*M + 2*M, 0);
+        Matrix_Put(&A, &Atn, cur_row+M, 0);
 
+        int cur_col = M;
         for (int j = 0; j < N_TANGENTS; j++) {
             Matrix Att;
             ProjectForces(&Att, AXIS_TANGENT1 + i, AXIS_TANGENT1 + j);
             
-            Matrix_Put(&A, &Att, 2*i*M + M, (j+1)*M);
-            for (int k = 0; k < M*M; k++) Att.data[k] *= -1.0;
-            Matrix_Put(&A, &Att, 2*i*M + M, (1 + N_TANGENTS + j)*M);
+            Matrix_Put(&A, &Att, cur_row, cur_col);
+            Matrix_Negate(&Att);
+            Matrix_Put(&A, &Att, cur_row, cur_col + M);
             
-            Matrix_Put(&A, &Att, 2*i*M + 2*M, (j+1)*M);
-            for (int k = 0; k < M*M; k++) Att.data[k] *= -1.0;
-            Matrix_Put(&A, &Att, 2*i*M + 2*M, (1 + N_TANGENTS + j)*M);
+            Matrix_Put(&A, &Att, cur_row+M, cur_col);
+            Matrix_Negate(&Att);
+            Matrix_Put(&A, &Att, cur_row+M, cur_col + M);
             Matrix_Free(&Att);
+            cur_col += 2*M;
         }
 
-        Matrix_Put(&A, &I, 2*i*M + M, MM - M);
-        Matrix_Put(&A, &I, 2*i*M + M + M, MM - M);
+        Matrix_Put(&A, &I, cur_row, MM - M);
+        Matrix_Put(&A, &I, cur_row + M, MM - M);
         Matrix_Free(&Atn);
+        cur_row += 2*M;
     }
 
     // last
     for (int i = 0; i < M; i++) {
         for(int j=0; j<M; j++) MATRIX_AT(I, i, j) = 0.0;
-        MATRIX_AT(I, i, i) = contacts[i].mu;
+        MATRIX_AT(I, i, i) = contacts[i].mu + 1e-6;
     }
-    Matrix_Put(&A, &I, MM - M, 0);
+    Matrix_Put(&A, &I, cur_row, 0);
     
     for (int i = 0; i < M; i++) {
         for(int j=0; j<M; j++) MATRIX_AT(I, i, j) = (i==j) ? -1.0 : 0.0;
     }
     for (int i = 0; i < 2*N_TANGENTS; i ++)
-        Matrix_Put(&A, &I, MM - M, (i+1)*M);
+        Matrix_Put(&A, &I, cur_row, (i+1)*M);
     
     for (int k = 0; k < contacts.size(); k++) {
         Contact *ck = &contacts[k];
@@ -211,38 +215,27 @@ static void Solve(Matrix *x)
         Vec3 nk = ck->axes[AXIS_NORMAL];
         double jn_a = Vec3_Dot(nk, rel_accel);
         MATRIX_AT(b, k, 0) = jn_a;
-
+        
+        cur_row = M;
         for (int i = 0; i < N_TANGENTS; i++) {
             Vec3 tik = ck->axes[AXIS_TANGENT1 + i];
             double jti_a = Vec3_Dot(tik, rel_accel);
-            MATRIX_AT(b, M + i*2*M + k, 0) = jti_a;
-            MATRIX_AT(b, M + i*2*M + M + k, 0) = -jti_a;
+            MATRIX_AT(b, cur_row + k, 0) = jti_a;
+            MATRIX_AT(b, cur_row + M + k, 0) = -jti_a;
+            cur_row += 2*M;
         }
     }
 
-    // Matrix A, b;
-    // ProjectForces(&A, AXIS_NORMAL, AXIS_NORMAL);
-    // Matrix_Init(&b, contacts.size(), 1);
-    // Matrix_Init(x, contacts.size(), 1);
-
-    // for (int k = 0; k < contacts.size(); k++) {
-    //     Contact *ck = &contacts[k];
-    //     Vec3 rel_accel = Vec3_Sub(bodies[ck->j].accel, bodies[ck->i].accel);
-    //     Vec3 nk = ck->axes[AXIS_NORMAL];
-    //     double jn_a = Vec3_Dot(nk, rel_accel);
-    //     MATRIX_AT(b, k, 0) = jn_a;
-    // }
-
-    printf("A=\n");
-    Matrix_Print(&A);
-    printf("b=\n");
-    Matrix_PrintTransposed(&b);
+    // printf("A=\n");
+    // Matrix_Print(&A);
+    // printf("b=\n");
+    // Matrix_PrintTransposed(&b);
     
     SolveLemke(&A, &b, x);
-    Verify(&A, &b, x);    
+    //Verify(&A, &b, x);    
 
-    printf("x=\n");
-    Matrix_PrintTransposed(x);
+    // printf("x=\n");
+    // Matrix_PrintTransposed(x);
     
     Matrix_Free(&A); Matrix_Free(&b);
     Matrix_Free(&I);
@@ -259,10 +252,11 @@ void Phys_Solve()
         double fn = MATRIX_AT(x, i, 0);
         c.res_normal_force = fn;
 
-        c.res_tangent_force = {0.0, 0.0, 0.0};
+        int cur_row = M;
         for (int j = 0; j < N_TANGENTS; j++) {
-            double ftj = MATRIX_AT(x, M + j*2*M + i, 0) - MATRIX_AT(x, M + j*2*M + M + i, 0);
-            c.res_tangent_force = Vec3_Add(c.res_tangent_force, Vec3_Scale(c.axes[AXIS_TANGENT1 + j], ftj));
+            double ftj = MATRIX_AT(x, cur_row + i, 0) - MATRIX_AT(x, cur_row + M + i, 0);
+            c.res_tangent_force[j] = ftj;
+            cur_row += 2*M;
         }
     }
     Matrix_Free(&x);
