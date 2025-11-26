@@ -4,7 +4,7 @@
 #include "linalg.h"
 #include <vector>
 
-#define N_TANGENTS 5
+#define N_TANGENTS 9
 
 #define AXIS_NORMAL 0
 #define AXIS_TANGENT1 1
@@ -26,7 +26,7 @@ struct Contact {
 struct Body {
     double mass;
     Vec3 accel;
-
+    
     Vec3 center;
     Vec3 size;
     Vec3 euler;

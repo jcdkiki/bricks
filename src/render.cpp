@@ -90,7 +90,7 @@ struct Settings {
     bool show_total_forces { false };
     bool show_rel_accel { true };
 
-    char filename[128] { "examples/1.bin" };
+    char filename[128] { "" };
     int selected_body { -1 };
     int selected_contact { -1 };
 
@@ -731,7 +731,7 @@ void Render_Perspective()
                 if (screen.x >= MENU_WIDTH && screen.y >= 0 && screen.x < MENU_WIDTH+view_size.x && screen.y < view_size.y) {
                     std::string s = std::to_string(i);
                     ImVec2 sz = ImGui::CalcTextSize(s.c_str());
-                    draw_list->AddText(ImVec2(screen.x - sz.x, screen.y - sz.y), 0xFFFFFFFF, s.c_str());
+                    draw_list->AddText(ImVec2(screen.x - sz.x/2.0, screen.y - sz.y/2.0), 0xFFFFFFFF, s.c_str());
                 }
             }
         }
@@ -768,7 +768,7 @@ void GetFilenames()
 {
     filenames.clear();
     try {
-        std::string path = "./examples"; // Путь к каталогу
+        std::string path = "./examples";
         for (const auto& entry : std::filesystem::directory_iterator(path)) {
             filenames.push_back("examples/" + entry.path().filename().string());
         }
