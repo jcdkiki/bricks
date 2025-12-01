@@ -62,6 +62,7 @@ struct Matrix {
 
 void Matrix_Free(Matrix *mat);
 void Matrix_Init(Matrix *mat, int rows, int cols);
+void Matrix_MulInit(Matrix *A, Matrix *B, Matrix *res);
 void Matrix_Mul(Matrix *A, Matrix *B, Matrix *res);
 void Matrix_InitTransposed(Matrix *src, Matrix *dst);
 void Matrix_InitIdentity(Matrix *mat, int size);
@@ -69,6 +70,7 @@ void Matrix_Add(Matrix *A, Matrix *B, Matrix *res);
 void Matrix_Put(Matrix *mat, Matrix *src, int row, int col);
 void Matrix_Print(Matrix *mat);
 void Matrix_PrintTransposed(Matrix *mat);
+double Matrix_Dot(Matrix *A, Matrix *B);
 
 static inline void Matrix_Negate(Matrix *A)
 {
@@ -76,5 +78,39 @@ static inline void Matrix_Negate(Matrix *A)
         A->data[i] = -A->data[i];
     }
 }
+
+static inline void Matrix_FillZeros(Matrix *A)
+{
+    for (int i = 0; i < A->rows * A->cols; i++) {
+        A->data[i] = 0.0;
+    }
+}
+
+static inline double Matrix_Norm(Matrix *A)
+{
+    double res = 0.0;
+    for (int i = 0; i < A->rows * A->cols; i++) {
+        res += A->data[i] * A->data[i];
+    }
+    return res;
+}
+
+static inline double Matrix_InfinityNorm(Matrix *A)
+{
+    double max_row_sum = 0.0;
+    for (int i = 0; i < A->rows; i++) {
+        double row_sum = 0.0;
+        for (int j = 0; j < A->cols; j++) {
+            row_sum += fabs(MATRIX_AT(*A, i, j));
+        }
+        if (row_sum > max_row_sum) {
+            max_row_sum = row_sum;
+        }
+    }
+    return max_row_sum;
+}
+
+// (Matrix*, const char*)*count
+void Matrix_PrintMany(int count, ...);
 
 #endif

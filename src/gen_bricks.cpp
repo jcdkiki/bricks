@@ -1,7 +1,7 @@
 #include "physics.h"
 
-#define SIZE_X 10
-#define SIZE_Y 10
+#define SIZE_X 5
+#define SIZE_Y 5
 
 int main()
 {
@@ -23,7 +23,17 @@ int main()
         c.j = i + 1;
         c.angles = {0, 0, 0};
         c.mu = 0.3;
-        c.pos = {(double)i, -0.5, 0};
+
+        c.pos = {(double)i + 0.5, -0.5, 0.5};
+        contacts.push_back(c);
+
+        c.pos = {(double)i + 0.5, -0.5, -0.5};
+        contacts.push_back(c);
+
+        c.pos = {(double)i - 0.5, -0.5, 0.5};
+        contacts.push_back(c);
+
+        c.pos = {(double)i - 0.5, -0.5, -0.5};
         contacts.push_back(c);
     }
 
@@ -35,8 +45,19 @@ int main()
             c.j = idx;
             c.angles = {0, 0, 0};
             c.mu = 0.3;
-            c.pos = {(double)j, -0.5 + i, 0};
+            
+            c.pos = {(double)j + 0.5, -0.5 + i, 0.5};
             contacts.push_back(c);
+            
+            c.pos = {(double)j + 0.5, -0.5 + i, -0.5};
+            contacts.push_back(c);
+
+            c.pos = {(double)j - 0.5, -0.5 + i, 0.5};
+            contacts.push_back(c);
+
+            c.pos = {(double)j - 0.5, -0.5 + i, -0.5};
+            contacts.push_back(c);
+            
             idx++;
         }
     }
@@ -49,8 +70,20 @@ int main()
             c.j = idx + 1;
             c.angles = {0, 0, -90.0};
             c.mu = 0.3;
-            c.pos = {(double)j - 0.5, (double)i, 0};
+            
+            c.pos = {(double)j - 0.5, (double)i + 0.5, 0.5};
             contacts.push_back(c);
+            
+            c.pos = {(double)j - 0.5, (double)i + 0.5, -0.5};
+            contacts.push_back(c);
+            
+            c.pos = {(double)j - 0.5, (double)i - 0.5, 0.5};
+            contacts.push_back(c);
+            
+            c.pos = {(double)j - 0.5, (double)i - 0.5, -0.5};
+            contacts.push_back(c);
+            
+
             idx++;
         }
         idx++;

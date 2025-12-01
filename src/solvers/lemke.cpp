@@ -17,6 +17,7 @@
  */
 
 #include "lcp_pivot.h"
+#include "solvers.h"
 
 #include <assert.h>  // for assert
 #include <float.h>   // for DBL_EPSILON
@@ -341,6 +342,9 @@ _exit:
   if (*info > 0) {
     printf("No solution found !\n");
   }
+
+  free(basis);
+  free(mat);
 }
 
 void SolveLemke(Matrix *M_in, Matrix *q_in, Matrix *z_out)

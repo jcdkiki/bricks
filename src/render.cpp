@@ -61,12 +61,24 @@ struct Transform {
     Vec2 start_mouse_pos;
 };
 
+struct CopyBuffer {
+    enum Type {
+        NONE, BODY, CONTACT
+    } type;
+
+    union {
+        Body body;
+        Contact contact;
+    } buf;
+};
+
 std::vector<std::string> filenames;
 
 static bool inited = false;
 static OrthoView ortho_views[3];
 FrameBuffer *fb_perspective = nullptr;
 Transform cur_transform;
+CopyBuffer copy_buffer;
 
 static Camera camera = {{0, 0, 0}, 0, 0};
 static bool keys[512] = {false};
@@ -87,7 +99,6 @@ struct Settings {
     bool show_axes { true };
     bool show_input_forces { false };
     bool show_output_forces { false };
-    bool show_total_forces { false };
     bool show_rel_accel { true };
 
     char filename[128] { "" };
@@ -98,9 +109,6 @@ struct Settings {
     
     double snap { 1 };
     bool snap_enabled { true };
-
-    bool animate;
-    double time = 0;
 
     bool less_arrows { false };
     bool show_input_rel_accel { false };
@@ -247,9 +255,6 @@ static bool Click3DPoint(Vec3 point, double *dist, double radius = 0.5)
         0
     };
 
-    printf("ndc_point: %lf %lf %lf\n", ndc_point.x, ndc_point.y, ndc_point.z);
-    printf("ndc_mouse: %lf %lf %lf\n", ndc_mouse.x, ndc_mouse.y, ndc_mouse.z);
-
     // TODO: make dist^2
     *dist = Vec3_Length(Vec3_Sub(ndc_mouse, ndc_point));
     return *dist < radius;
@@ -322,9 +327,10 @@ void DrawGrid(Vec3 a1, Vec3 a2, Vec3 center, int a1_len = 10, int a2_len = 10, d
 void MoveBody()
 {
     if (cur_transform.mode == MoveMode::NONE) return;
+    if (cur_transform.var == nullptr) return;
 
     int view_idx = GetViewIdx();
-    if (view_idx == VIEW_PERSPECTIVE) return;
+    if (view_idx == VIEW_PERSPECTIVE || view_idx == VIEW_NONE) return;
     OrthoView &v = ortho_views[view_idx];
     Vec3 a1 = v.axes[0];
     Vec3 a2 = v.axes[1];
@@ -363,10 +369,6 @@ void Render_UpdateCamera(double dt)
     if (keys[GLFW_KEY_S]) camera.pos = Vec3_Sub(camera.pos, Vec3_Scale(camera.forward, speed));
     if (keys[GLFW_KEY_A]) camera.pos = Vec3_Sub(camera.pos, Vec3_Scale(camera.right, speed));
     if (keys[GLFW_KEY_D]) camera.pos = Vec3_Add(camera.pos, Vec3_Scale(camera.right, speed));
-
-    if (settings.animate) {
-        settings.time += dt;
-    }
 }
 
 static void DrawBoxShaded(Vec3 center, Vec3 size, Vec3 euler, Vec3 color)
@@ -462,25 +464,40 @@ static void DrawBox(Vec3 center, Vec3 size, Vec3 euler, Vec3 color)
         DrawBoxShaded(center, size, euler, color);
 }
 
-Vec3 GetBodyAccel(int i)
+static Vec3 CalcInertia(Body *b)
 {
-    Vec3 accel = bodies[i].accel;
-    double mass = bodies[i].mass;
+    return Vec3 {
+        1/12.0 * b->mass * (b->size.y * b->size.y + b->size.z * b->size.z),
+        1/12.0 * b->mass * (b->size.x * b->size.x + b->size.z * b->size.z),
+        1/12.0 * b->mass * (b->size.x * b->size.x + b->size.y * b->size.y)
+    };
+}
+
+Vec3 GetBodyAccel(int i, Vec3 point)
+{
+    Body* body = &bodies[i];
+    Vec3 inertia = CalcInertia(body);
+    Vec3 res = Phys_ForceEffectOnPoint(body->center, body->center, body->force, point, body->mass, inertia);
 
     for (int j = 0; j < contacts.size(); j++) {
         Contact &c = contacts[j];
-        if (c.j == i) {
-            accel = Vec3_Add(accel, Vec3_Scale(c.axes[AXIS_NORMAL], c.res_normal_force / mass));
-            for (int k = 0; k < N_TANGENTS; k++)
-                accel = Vec3_Add(accel, Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k] / mass));
-        }
-        else if (c.i == i) {
-            accel = Vec3_Sub(accel, Vec3_Scale(c.axes[AXIS_NORMAL], c.res_normal_force / mass));
-            for (int k = 0; k < N_TANGENTS; k++)
-                accel = Vec3_Sub(accel, Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k] / mass));
+        Vec3 n_force = {0, 0, 0};
+        if (c.j == i)      n_force = Vec3_Scale(c.axes[AXIS_NORMAL], c.res_normal_force);
+        else if (c.i == i) n_force = Vec3_Scale(c.axes[AXIS_NORMAL], -c.res_normal_force);
+        Vec3 n_effect = Phys_ForceEffectOnPoint(c.pos, body->center, n_force, point, body->mass, inertia);
+        res = Vec3_Add(res, n_effect);
+
+        for (int k = 0; k < N_TANGENTS; k++) {
+            Vec3 t_force = {0, 0, 0};
+            if (c.j == i)      t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k]);
+            else if (c.i == i) t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], -c.res_tangent_force[k]);
+            
+            Vec3 t_effect = Phys_ForceEffectOnPoint(c.pos, body->center, t_force, point, body->mass, inertia);
+            res = Vec3_Add(res, t_effect);
         }
     }
-    return accel;
+    
+    return res;
 }
 
 #define N_BODY_COLORS 16
@@ -595,12 +612,7 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
             color = {1, 1, 0};
         }
 
-        Vec3 center = bodies[i].center;
-        if (settings.animate) {
-            center = Vec3_Add(center, Vec3_Scale(GetBodyAccel(i), settings.time*settings.time*0.5));
-        }
-
-        DrawBox(center, bodies[i].size, bodies[i].euler, color);
+        DrawBox(bodies[i].center, bodies[i].size, bodies[i].euler, color);
     }
 
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -633,8 +645,8 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         for (int i = 0; i < bodies.size(); i++) {
             if (settings.less_arrows && i != settings.selected_body) continue;
             Body *b = &bodies[i];
-            if (Vec3_Length(b->accel) > 1e-6)
-                DrawArrow(b->center, b->accel);
+            if (Vec3_Length(b->force) > 1e-6)
+                DrawArrow(b->center, b->force);
         }
     }
 
@@ -643,7 +655,10 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         for (int i = 0; i < contacts.size(); i++) {
             if (settings.less_arrows && i != settings.selected_contact) continue;
             Contact *c = &contacts[i];
-            Vec3 rel_accel = Vec3_Sub(bodies[c->j].accel, bodies[c->i].accel);
+            Body *bi = &bodies[c->i];
+            Body *bj = &bodies[c->j];
+
+            Vec3 rel_accel = Vec3_Sub(Vec3_Scale(bj->force, 1.0 / bj->mass), Vec3_Scale(bi->force, 1.0 / bi->mass));
             if (Vec3_Length(rel_accel) > 1e-6)
                 DrawArrow(c->pos, rel_accel);
         }
@@ -665,25 +680,15 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         }
     }
 
-    if (settings.show_total_forces) {
-        glColor3f(1.f, 1.f, 1.f);
-        for (int i = 0; i < bodies.size(); i++) {
-            if (settings.less_arrows && i != settings.selected_body) continue;
-            Body *b = &bodies[i];
-            Vec3 accel = GetBodyAccel(i);
-            if (Vec3_Length(accel) > 1e-6f) DrawArrow(b->center, accel);
-        }
-    }
-
     if (settings.show_rel_accel) {
         glColor3f(1.f, 1.f, 1.f);
         for (int i = 0; i < contacts.size(); i++) {
             if (settings.less_arrows && i != settings.selected_contact) continue;
             Contact &c = contacts[i];
-            Vec3 i_accel = GetBodyAccel(c.i);
-            Vec3 j_accel = GetBodyAccel(c.j);
+            Vec3 i_accel = GetBodyAccel(c.i, c.pos);
+            Vec3 j_accel = GetBodyAccel(c.j, c.pos);
             Vec3 diff = Vec3_Sub(j_accel, i_accel);
-            if (Vec3_Length(diff) > 1e-6f)
+            if (Vec3_Length(diff) > 1e-6)
                 DrawArrow(c.pos, diff);
         }
     }
@@ -801,6 +806,21 @@ void DeleteContact()
     settings.selected_contact = -1;
 }
 
+static Body default_body = { .mass = 1, .size = { 1, 1, 1 } };
+static Contact default_contact = { .mu = 1.0 };
+
+void CopyBody(Body *body)
+{
+    bodies.push_back(*body);
+    bodies.back().center = Vec3_Add(camera.pos, Vec3_Scale(camera.forward, 5.0));
+}
+
+void CopyContact(Contact *contact)
+{
+    contacts.push_back(*contact);
+    contacts.back().pos = Vec3_Add(camera.pos, Vec3_Scale(camera.forward, 5.0));
+}
+
 void Render_Draw()
 {
     if (!inited) {
@@ -863,6 +883,7 @@ void Render_Draw()
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(MENU_WIDTH, WIN_HEIGHT), ImGuiCond_Always);
     ImGui::Begin("Settings", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+    ImGui::Text("Method: " METHOD_NAME);
     if (ImGui::CollapsingHeader("Help")) {
         ImGui::SeparatorText("3D view");
         ImGui::Text("Right mouse button: look around");
@@ -886,9 +907,8 @@ void Render_Draw()
         
         ImGui::Text("Forces"); ImGui::SameLine();
         ImGui::Checkbox("Input", &settings.show_input_forces); ImGui::SameLine();
-        ImGui::Checkbox("Output", &settings.show_output_forces); ImGui::SameLine();
-        ImGui::Checkbox("Total", &settings.show_total_forces);
-
+        ImGui::Checkbox("Output", &settings.show_output_forces);
+        
         ImGui::Text("Rel accel"); ImGui::SameLine();
         ImGui::Checkbox("Input##in_rel", &settings.show_input_rel_accel); ImGui::SameLine();
         ImGui::Checkbox("Result", &settings.show_rel_accel);
@@ -938,37 +958,12 @@ void Render_Draw()
         if (ImGui::Button("ON")) settings.snap_enabled = true;
     }
 
-    if (settings.animate) {
-        if (ImGui::Button("Stop")) settings.animate = false;
-    }
-    else {
-        if (ImGui::Button("Play")) {
-            settings.animate = true;
-            settings.time = 0;
-        }
-    }
-
     ImGui::Separator();
     if (ImGui::Button("New contact point")) {
-        Vec3 spawn_pos = Vec3_Add(camera.pos, Vec3_Scale(camera.forward, 5.0));
-        Contact new_contact;
-        memset(&new_contact, 0, sizeof(Contact));
-        new_contact.mu = 1.0;
-        new_contact.pos = spawn_pos;
-        contacts.push_back(new_contact);
+        CopyContact(&default_contact);
     }
     if (ImGui::Button("New body")) {
-        Vec3 spawn_pos = Vec3_Add(camera.pos, Vec3_Scale(camera.forward, 5.0));
-        if (settings.selected_body != -1) {
-            Body new_body = bodies[settings.selected_body];
-            new_body.center = spawn_pos;
-            bodies.push_back(new_body);
-        } 
-        else {
-            bodies.push_back(Body {
-                1.0, {0.0, 0.0, 0.0}, spawn_pos, {2.0, 1.0, 2.0}, {0.0, 0.0, 0.0}
-            });
-        }
+        CopyBody(&default_body);
     }
     
 
@@ -986,10 +981,10 @@ void Render_Draw()
         ImGui::InputDouble("##px", &b->center.x); ImGui::NextColumn();
         ImGui::InputDouble("##py", &b->center.y); ImGui::NextColumn();
         ImGui::InputDouble("##pz", &b->center.z); ImGui::NextColumn();
-        ImGui::Text("accel"); ImGui::NextColumn();
-        ImGui::InputDouble("##ax", &b->accel.x); ImGui::NextColumn();
-        ImGui::InputDouble("##ay", &b->accel.y); ImGui::NextColumn();
-        ImGui::InputDouble("##az", &b->accel.z); ImGui::NextColumn();
+        ImGui::Text("force"); ImGui::NextColumn();
+        ImGui::InputDouble("##ax", &b->force.x); ImGui::NextColumn();
+        ImGui::InputDouble("##ay", &b->force.y); ImGui::NextColumn();
+        ImGui::InputDouble("##az", &b->force.z); ImGui::NextColumn();
         ImGui::Text("size"); ImGui::NextColumn();
         ImGui::InputDouble("##sx", &b->size.x); ImGui::NextColumn();
         ImGui::InputDouble("##sy", &b->size.y); ImGui::NextColumn();
@@ -1001,7 +996,7 @@ void Render_Draw()
         ImGui::Columns();
         
         if (ImGui::Button("G")) {
-            b->accel = {0.0, -9.8, 0.0};
+            b->force = {0.0, -9.8 * b->mass, 0.0};
         }
 
         if (ImGui::Button("Delete"))
@@ -1034,10 +1029,13 @@ void Render_Draw()
         ImGui::Columns();
         ImGui::InputDouble("normal force", &c->res_normal_force);
         double sum = 0;
+        double norm2 = 0;
         for (int i = 0; i < N_TANGENTS; i++) {
             sum += fabs(c->res_tangent_force[i]);
+            norm2 += c->res_tangent_force[i]*c->res_tangent_force[i];
         }
         ImGui::Text("tangent forces sum: %lf", sum);
+        ImGui::Text("tangent force norm: %lf", sqrt(norm2));
 
         if (ImGui::Button("Delete"))
             DeleteContact();
@@ -1191,17 +1189,36 @@ void Render_OnKey(int key, int action, int mods)
             if (settings.selected_contact != -1) DeleteContact();
             else if (settings.selected_body != -1) DeleteBody();
             break;
-        case GLFW_KEY_ENTER:
-            settings.animate = !settings.animate;
-            break;
         }   
+    }
+    else if (action == GLFW_RELEASE && keys[GLFW_KEY_LEFT_CONTROL]) {
+        switch (key) {
+        case GLFW_KEY_C:
+            if (settings.selected_body != -1) {
+                copy_buffer.type = CopyBuffer::BODY;
+                copy_buffer.buf.body = bodies[settings.selected_body];
+            }
+            else if (settings.selected_contact != -1) {
+                copy_buffer.type = CopyBuffer::CONTACT;
+                copy_buffer.buf.contact = contacts[settings.selected_contact];
+            }
+            break;
+        case GLFW_KEY_V:
+            if (copy_buffer.type == CopyBuffer::BODY) {
+                CopyBody(&copy_buffer.buf.body);
+            }
+            else if (copy_buffer.type == CopyBuffer::CONTACT) {
+                CopyContact(&copy_buffer.buf.contact);
+            }
+            break;
+        }
     }
 }
 
 void Render_OnScroll(int xoffset, int yoffset)
 {
     int idx = GetViewIdx();
-    if (idx == -1) return;
+    if (idx == VIEW_PERSPECTIVE || idx == VIEW_NONE) return;
     
     if (yoffset > 0) ortho_views[idx].scale /= 1.25f;
     if (yoffset < 0) ortho_views[idx].scale *= 1.25f;

@@ -129,6 +129,7 @@ f_n \\ f_t^+ \\ f_t^- \\ \beta
 
 Готово.
 
+\paragraph{Some things}
 \[
 \begin{matrix}
     0 \le a_{n,i} && \perp && f_{n,i} \ge 0 \\
@@ -136,6 +137,25 @@ f_n \\ f_t^+ \\ f_t^- \\ \beta
     0 \le -a_{t,i} + \beta_i && \perp && f_{t,i}^- \ge 0 \\
     0 \le \mu f_{n,i} - \sum_k (f_{t_k,i}^+ + f_{t_k,i}^-) && \perp && \beta_i \ge 0
 \end{matrix}
+\]
+
+Solve $Ax + b = 0$ a.k.a minimize $\frac{1}{2}x^T A x + b^T x$
+
+Constraints:
+
+\[
+\begin{cases}
+f_{n,i} \ge 0 \\
+a_{n,i} \ge 0 \\
+f_{n,i} \cdot a_{n,i} = 0 \\
+\\
+\mu f_{n,i} - \sqrt{f_{u,i}^2 + f_{v,i}^2} \ge 0 \\
+(\mu f_{n,i} - \sqrt{f_{u,i}^2 + f_{v,i}^2})
+\end{cases}
+\]
+
+\[
+a_{n,i} = \sum_j{A_{i,j} f_{*,j}}
 \]
 
 \end{document}

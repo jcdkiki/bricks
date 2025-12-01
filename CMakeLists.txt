@@ -3,6 +3,8 @@ project(bricks)
 
 include(FetchContent)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
+set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options(-O3)
 
@@ -41,15 +43,21 @@ add_executable(bricks
     src/glad.c
     src/linalg.cpp
     src/physics.cpp
-    src/lemke.cpp
+    src/solvers/lemke.cpp
+    src/solvers/pgs.cpp
+    src/solvers/pg.cpp
     src/render.cpp
 )
 
 add_executable(
     bricks_tests 
     src/linalg.cpp
-    src/lemke.cpp
-    test/test_lcp.cpp
+    src/solvers/lemke.cpp
+    src/solvers/pgs.cpp
+    src/solvers/pg.cpp
+    test/test_lemke.cpp
+    test/test_pgs.cpp
+    test/test_pg.cpp
 )
 
 add_executable(
@@ -57,7 +65,9 @@ add_executable(
     src/gen_bricks.cpp
     src/physics.cpp
     src/linalg.cpp
-    src/lemke.cpp
+    src/solvers/lemke.cpp
+    src/solvers/pgs.cpp
+    src/solvers/pg.cpp
 )
 
 target_link_libraries(bricks PRIVATE glfw imgui)
