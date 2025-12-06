@@ -5,21 +5,21 @@
 #include <vector>
 
 //#define USE_LEMKE
-//#define USE_PGS
 #define USE_PG
+//#define USE_ENUM
 
-#if defined(USE_PGS) || defined(USE_PG)
+#if defined(USE_PG)
 #define N_TANGENTS 2
 #else
-#define N_TANGENTS 3
+#define N_TANGENTS 4
 #endif
 
 #if defined(USE_PG)
 #define METHOD_NAME "PG"
-#elif defined(USE_PGS)
-#define METHOD_NAME "PGS"
 #elif defined(USE_LEMKE)
 #define METHOD_NAME "LEMKE"
+#elif defined(USE_ENUM)
+#define METHOD_NAME "ENUM"
 #endif
 
 #define AXIS_NORMAL 0
@@ -53,6 +53,7 @@ extern std::vector<Contact> contacts;
 
 void Phys_Solve();
 
+void Phys_TangentsFromEuler();
 void Phys_SaveToFile(const char *filename);
 void Phys_ReadFromFile(const char *filename);
 Vec3 Phys_ForceEffectOnPoint(Vec3 force_pos, Vec3 center_of_mass, Vec3 force, Vec3 point, double mass, Vec3 inertia);

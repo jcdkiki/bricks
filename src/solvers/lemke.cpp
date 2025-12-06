@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-#include "lcp_pivot.h"
 #include "solvers.h"
 
 #include <assert.h>  // for assert
@@ -29,7 +28,7 @@
 
 struct LinearComplementarityProblem {
     int size;
-    Matrix M;
+    double *M;
     double *q;
 };
 
@@ -171,7 +170,7 @@ int pivot_selection_lemke(double* mat, unsigned dim, unsigned drive, unsigned au
 void lcp_pivot_covering_vector(LinearComplementarityProblem* problem, double* u,
                                double* s, int* info,
                                double* cov_vec) {
-  double* M = problem->M.data;
+  double* M = problem->M;
   unsigned int dim = problem->size;
   unsigned int dim2;
 
@@ -225,11 +224,6 @@ void lcp_pivot_covering_vector(LinearComplementarityProblem* problem, double* u,
       for (unsigned int i = 0; i < dim; ++i) mat[i] -= mat[i + drive * dim] * pivot;
       *info = 0;
       goto exit_lcp_pivot;
-    } else if (block == -LCP_PATHSEARCH_NON_ENTERING_T) {
-      /* exit, t could not become basic */
-      printf("lcp_pivot :: t could not become basic, exiting\n");
-      *info = LCP_PATHSEARCH_NON_ENTERING_T;
-      goto exit_lcp_pivot;
     }
   }
 
@@ -264,7 +258,6 @@ void lcp_pivot_covering_vector(LinearComplementarityProblem* problem, double* u,
       /* We stop here: it either mean that the algorithm stops here or that there
        * is an issue with the LCP */
       if (block == -1) {
-        *info = LCP_PIVOT_RAY_TERMINATION;
         printf(
             "The pivot column is nonpositive ! We are on ray !\n"
             "It either means that the algorithm is not able to finish or that the LCP is "
@@ -347,17 +340,25 @@ _exit:
   free(mat);
 }
 
-void SolveLemke(Matrix *M_in, Matrix *q_in, Matrix *z_out)
+void SolveLemke(Matrix *M_in, Vector *q_in, Vector *z_out)
 {
     LinearComplementarityProblem lcp;
-    lcp.q = q_in->data;
-    lcp.size = q_in->rows;
-    Matrix_InitTransposed(M_in, &lcp.M);
+    lcp.q = (double*)q_in->data;
+    lcp.size = q_in->len;
     
+    double *M_transposed = (double*)malloc(sizeof(double) * M_in->rows * M_in->cols);
+    for (int i = 0; i < M_in->rows; i++) {
+        for (int j = 0; j < M_in->cols; j++) {
+            M_transposed[j * M_in->rows + i] = MATRIX_AT(*M_in, i, j);
+        }
+    }
+
+    lcp.M = M_transposed;
+
     double *u = (double*)calloc(lcp.size, sizeof(double));
 
     int info;
-    lcp_pivot(&lcp, z_out->data, u, &info);
+    lcp_pivot(&lcp, (double*)z_out->data, u, &info);
     free(u);
-    Matrix_Free(&lcp.M);
+    free(M_transposed);
 }

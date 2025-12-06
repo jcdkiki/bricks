@@ -3,8 +3,6 @@ project(bricks)
 
 include(FetchContent)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
-set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fno-omit-frame-pointer -fsanitize=address")
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_compile_options(-O3)
 
@@ -38,41 +36,5 @@ add_library(imgui
 target_include_directories(imgui PUBLIC ${imgui_external_SOURCE_DIR})
 target_link_libraries(imgui PUBLIC -lGL glfw)
 
-add_executable(bricks
-    src/main.cpp
-    src/glad.c
-    src/linalg.cpp
-    src/physics.cpp
-    src/solvers/lemke.cpp
-    src/solvers/pgs.cpp
-    src/solvers/pg.cpp
-    src/render.cpp
-)
-
-add_executable(
-    bricks_tests 
-    src/linalg.cpp
-    src/solvers/lemke.cpp
-    src/solvers/pgs.cpp
-    src/solvers/pg.cpp
-    test/test_lemke.cpp
-    test/test_pgs.cpp
-    test/test_pg.cpp
-)
-
-add_executable(
-    gen_bricks 
-    src/gen_bricks.cpp
-    src/physics.cpp
-    src/linalg.cpp
-    src/solvers/lemke.cpp
-    src/solvers/pgs.cpp
-    src/solvers/pg.cpp
-)
-
-target_link_libraries(bricks PRIVATE glfw imgui)
-target_include_directories(bricks PRIVATE "./include")
-target_include_directories(bricks_tests PRIVATE "./include")
-target_include_directories(gen_bricks PRIVATE "./include")
-target_link_libraries(bricks_tests PRIVATE gtest gtest_main)
-add_test(NAME bricks_tests COMMAND run_tests)
+add_subdirectory(test)
+add_subdirectory(src)

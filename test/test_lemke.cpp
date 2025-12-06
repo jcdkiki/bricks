@@ -1,49 +1,20 @@
-#include <gtest/gtest.h>
+#include "utils.h"
 #include "solvers.h"
 
-class TestLemke : public ::testing::Test {
-    Matrix A, b, x;
+class TestLemke : public TestSolver<false> {
 public:
-    void SetupMatrices(int n, double *A_arr, double *b_arr)
-    {
-        A.rows = n; A.cols = n;
-        b.rows = n; b.cols = 1;
-        x.rows = n; x.cols = 1;
-        A.data = A_arr;
-        b.data = b_arr;
-        x.data = (double*)calloc(n, sizeof(double));
-    }
-
     void CheckExact(int n, double *A_arr, double *b_arr, double *expected_x)
     {
         SetupMatrices(n, A_arr, b_arr);
         SolveLemke(&A, &b, &x);
-
-        for (int i = 0; i < n; i++) {
-            EXPECT_EQ(x.data[i], expected_x[i]);
-        }
-        free(x.data);
+        ExpectExact(expected_x);
     }
 
     void CheckOK(int n, double *A_arr, double *b_arr)
     {
         SetupMatrices(n, A_arr, b_arr);
         SolveLemke(&A, &b, &x);
-
-        for (int i = 0; i < n; i++) {
-            double a_i = 0;
-            for (int j = 0; j < n; j++) {
-                a_i += MATRIX_AT(A, i, j) * MATRIX_AT(x, j, 0);
-            }
-            a_i += MATRIX_AT(b, i, 0);
-
-            double x_i = MATRIX_AT(x, i, 0);
-            
-            EXPECT_GE(a_i, 0);
-            EXPECT_GE(x_i, 0);
-            EXPECT_EQ(a_i*x_i, 0) << "a_i: " << a_i << ", x_i: " << x_i;
-        }
-        free(x.data);
+        ExpectOK();
     }
 };
 

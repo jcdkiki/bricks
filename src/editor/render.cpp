@@ -617,27 +617,7 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
 
     glClear(GL_DEPTH_BUFFER_BIT);
 
-    for (Contact &c : contacts) {
-        float cx = cos(c.angles.x * M_PI / 180), sx = sin(c.angles.x * M_PI / 180);
-        float cy = cos(c.angles.y * M_PI / 180), sy = sin(c.angles.y * M_PI / 180);
-        float cz = cos(c.angles.z * M_PI / 180), sz = sin(c.angles.z * M_PI / 180);
-        c.axes[AXIS_NORMAL].x = sx*sy*cz - cx*sz;
-        c.axes[AXIS_NORMAL].y = sx*sy*sz + cx*cz;
-        c.axes[AXIS_NORMAL].z = sx*cy;
-
-        Vec3 T0 = {cy*cz, cy*sz, -sy};
-        Vec3 T1 = Vec3_Cross(T0, c.axes[AXIS_NORMAL]);
-        
-        for (int i = 0; i < N_TANGENTS; i++) {
-            double alpha = i * M_PI / (double)N_TANGENTS;
-            double cs = cos(alpha), sn = sin(alpha);
-            c.axes[AXIS_TANGENT1 + i] = Vec3_Add(Vec3_Scale(T0, cs), Vec3_Scale(T1, sn));
-        }
-
-        for (int i = 0; i < N_TANGENTS+1; i++) {
-            c.axes[i] = Vec3_Normalize(c.axes[i]);
-        }
-    }
+    Phys_TangentsFromEuler();
 
     glLineWidth(1.f);
     if (settings.show_input_forces) {

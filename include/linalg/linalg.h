@@ -1,7 +1,27 @@
 #ifndef LINALG_H
 #define LINALG_H
 
+#include <cstring>
 #include <math.h>
+
+#ifdef LINALG_USE_SIMD
+#include "linalg_simd.h"
+#else
+#include "linalg_trad.h"
+#endif
+
+#define MATRIX_AT(mat, row, col) ((mat).data[(int)(row) * (mat).cols + (int)(col)])   
+#define VECTOR_AT(vec, i) ((vec).data[(int)(i)])
+
+struct Matrix {
+    int rows, cols;
+    double *data;
+};
+
+struct Vector {
+    int len;
+    double *data;
+};
 
 struct Vec2 {
     double x, y;
@@ -53,64 +73,19 @@ static inline Vec3 Vec3_Cross(Vec3 a, Vec3 b)
     };
 }
 
-#define MATRIX_AT(mat, row, col) ((mat).data[(row) * (mat).cols + (col)])
-
-struct Matrix {
-    int rows, cols;
-    double *data;
-};
+void Vector_Free(Vector *vec);
+void Vector_Init(Vector *vec, int len);
+double Vector_Dot(Vector *A, Vector *B);
+void Vector_Print(Vector *vec);
+void Vector_MulAdd(Vector *dst, Vector *src, double scale);
 
 void Matrix_Free(Matrix *mat);
 void Matrix_Init(Matrix *mat, int rows, int cols);
-void Matrix_MulInit(Matrix *A, Matrix *B, Matrix *res);
-void Matrix_Mul(Matrix *A, Matrix *B, Matrix *res);
-void Matrix_InitTransposed(Matrix *src, Matrix *dst);
-void Matrix_InitIdentity(Matrix *mat, int size);
-void Matrix_Add(Matrix *A, Matrix *B, Matrix *res);
 void Matrix_Put(Matrix *mat, Matrix *src, int row, int col);
 void Matrix_Print(Matrix *mat);
-void Matrix_PrintTransposed(Matrix *mat);
-double Matrix_Dot(Matrix *A, Matrix *B);
-
-static inline void Matrix_Negate(Matrix *A)
-{
-    for (int i = 0; i < A->rows * A->cols; i++) {
-        A->data[i] = -A->data[i];
-    }
-}
-
-static inline void Matrix_FillZeros(Matrix *A)
-{
-    for (int i = 0; i < A->rows * A->cols; i++) {
-        A->data[i] = 0.0;
-    }
-}
-
-static inline double Matrix_Norm(Matrix *A)
-{
-    double res = 0.0;
-    for (int i = 0; i < A->rows * A->cols; i++) {
-        res += A->data[i] * A->data[i];
-    }
-    return res;
-}
-
-static inline double Matrix_InfinityNorm(Matrix *A)
-{
-    double max_row_sum = 0.0;
-    for (int i = 0; i < A->rows; i++) {
-        double row_sum = 0.0;
-        for (int j = 0; j < A->cols; j++) {
-            row_sum += fabs(MATRIX_AT(*A, i, j));
-        }
-        if (row_sum > max_row_sum) {
-            max_row_sum = row_sum;
-        }
-    }
-    return max_row_sum;
-}
-
-// (Matrix*, const char*)*count
-void Matrix_PrintMany(int count, ...);
+void Matrix_MulVec(Matrix *_A, Vector *_b, Vector *_c);
+void Matrix_Negate(Matrix *A);
+void Matrix_FillZeros(Matrix *A);
+double Matrix_InfinityNorm(Matrix *A);
 
 #endif
