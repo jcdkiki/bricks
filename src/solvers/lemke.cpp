@@ -26,6 +26,13 @@
 #include <linalg.h>
 #include <string.h>
 
+//#define LEMKE_SILENT
+
+#ifdef LEMKE_SILENT
+#define printf(...)
+#endif
+
+
 struct LinearComplementarityProblem {
     int size;
     double *M;

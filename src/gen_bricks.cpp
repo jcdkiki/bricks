@@ -1,7 +1,7 @@
 #include "physics.h"
 
-#define SIZE_X 5
-#define SIZE_Y 5
+#define SIZE_X 3
+#define SIZE_Y 3
 
 int main()
 {

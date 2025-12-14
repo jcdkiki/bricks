@@ -8,6 +8,9 @@
 #include <math.h>
 #include "solvers.h"
 
+#include <mutex>
+#include <thread>
+
 #define GRAVITY 9.8
 
 std::vector<Body> bodies;
@@ -120,10 +123,9 @@ void ProjectForces(Matrix *A, int axes, int forces)
     }
 }
 
-/*
 void Phys_SolveLemke()
 {
-    Matrix x;
+    Vector x;
     int M = contacts.size();
     int MM = (2 + N_TANGENTS*2)*M;
     int cur_row = 0;
@@ -132,10 +134,11 @@ void Phys_SolveLemke()
     Matrix_Init(&I, M, M);
     for (int i = 0; i < M; i++) MATRIX_AT(I, i, i) = 1.0;
 
-    Matrix A, b;
+    Matrix A;
+    Vector b;
     Matrix_Init(&A, MM, MM);
-    Matrix_Init(&b, MM, 1);
-    Matrix_Init(&x, MM, 1);
+    Vector_Init(&b, MM);
+    Vector_Init(&x, MM);
 
     // first
     Matrix Ann;
@@ -206,14 +209,14 @@ void Phys_SolveLemke()
         Vec3 j_effect = Phys_ForceEffectOnPoint(bj->center, bj->center, bj->force, ck->pos, bj->mass, inertia_j);
         
         Vec3 rel_accel = Vec3_Sub(j_effect, i_effect);
-        MATRIX_AT(b, k, 0) = Vec3_Dot(ck->axes[AXIS_NORMAL], rel_accel);
+        VECTOR_AT(b, k) = Vec3_Dot(ck->axes[AXIS_NORMAL], rel_accel);
         
         cur_row = M;
         for (int i = 0; i < N_TANGENTS; i++) {
             Vec3 tik = ck->axes[AXIS_TANGENT1 + i];
             double jti_a = Vec3_Dot(tik, rel_accel);
-            MATRIX_AT(b, cur_row + k, 0) = jti_a;
-            MATRIX_AT(b, cur_row + M + k, 0) = -jti_a;
+            VECTOR_AT(b, cur_row + k) = jti_a;
+            VECTOR_AT(b, cur_row + M + k) = -jti_a;
             cur_row += 2*M;
         }
     }
@@ -226,22 +229,21 @@ void Phys_SolveLemke()
     
     for (int i = 0; i < M; i++) {
         Contact &c = contacts[i];
-        double fn = MATRIX_AT(x, i, 0);
+        double fn = VECTOR_AT(x, i);
         c.res_normal_force = fn;
 
         int cur_row = M;
         for (int j = 0; j < N_TANGENTS; j++) {
-            double ftj = MATRIX_AT(x, cur_row + i, 0) - MATRIX_AT(x, cur_row + M + i, 0);
+            double ftj = VECTOR_AT(x, cur_row + i) - VECTOR_AT(x, cur_row + M + i);
             c.res_tangent_force[j] = ftj;
             cur_row += 2*M;
         }
     }
 
-    Matrix_Free(&A); Matrix_Free(&b);
+    Matrix_Free(&A); Vector_Free(&b);
     Matrix_Free(&I);
-    Matrix_Free(&x);
+    Vector_Free(&x);
 }
-*/
 
 static void Project(Vector *x)
 {
@@ -324,42 +326,42 @@ struct {
     Vector b, x;
 
     std::vector<int> best_indices;
-    double best_mse;
+    double best_err;
+    
     std::vector<int> indices;
 } enum_data;
 
-static void ProjectEnum(Vector *x)
-{
-    int M = contacts.size();
-    for (int i = 0; i < M; i++) {
-        VECTOR_AT(*x, i) = std::max(0.0, VECTOR_AT(*x, i));
-        
-        double n = VECTOR_AT(*x, i);
-        double t = VECTOR_AT(*x, i + M);
-        
-        double lim = n * contacts[i].mu;
-        if (t > lim) t = lim;
-        else if (t < -lim) t = -lim;
-        VECTOR_AT(*x, i + M) = t;
-    }
-}
 
-static double Solve_ForIndices()
+static void Solve_ForIndices()
 {
     int M = contacts.size();
     
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < M; j++) {
-            int nn = ProjectForce(AXIS_NORMAL, AXIS_NORMAL, i, j);
-            int nt = ProjectForce(AXIS_NORMAL, enum_data.indices[j], i, j);
-            int tn = ProjectForce(enum_data.indices[i], AXIS_NORMAL, i, j);
-            int tt = ProjectForce(enum_data.indices[i], enum_data.indices[j], i, j);
+            double nn = ProjectForce(AXIS_NORMAL, AXIS_NORMAL, i, j);
+            double nt = ProjectForce(AXIS_NORMAL, AXIS_TANGENT1 + enum_data.indices[j], i, j);
+            double tn = ProjectForce(AXIS_TANGENT1 + enum_data.indices[i], AXIS_NORMAL, i, j);
+            double tt = ProjectForce(AXIS_TANGENT1 + enum_data.indices[i], AXIS_TANGENT1 + enum_data.indices[j], i, j);
 
             MATRIX_AT(enum_data.A, i, j) = nn;
             MATRIX_AT(enum_data.A, i, j + M) = nt;
+            MATRIX_AT(enum_data.A, i, j + 2*M) = -nt;
+
             MATRIX_AT(enum_data.A, i + M, j) = tn;
             MATRIX_AT(enum_data.A, i + M, j + M) = tt;
+            MATRIX_AT(enum_data.A, i + M, j + 2*M) = -tt;
+
+            MATRIX_AT(enum_data.A, i + 2*M, j) = -tn;
+            MATRIX_AT(enum_data.A, i + 2*M, j + M) = -tt;
+            MATRIX_AT(enum_data.A, i + 2*M, j + 2*M) = tt;
         }
+
+        MATRIX_AT(enum_data.A, i + M, i + 3*M) = 1;
+        MATRIX_AT(enum_data.A, i + 2*M, i + 3*M) = 1;
+
+        MATRIX_AT(enum_data.A, i + 3*M, i) = contacts[i].mu;
+        MATRIX_AT(enum_data.A, i + 3*M, i + M) = -1;
+        MATRIX_AT(enum_data.A, i + 3*M, i + 2*M) = -1;
     }
 
     for (int k = 0; k < contacts.size(); k++) {
@@ -372,23 +374,38 @@ static double Solve_ForIndices()
         Vec3 t = ck->axes[enum_data.indices[k]];
         double rel_n = Vec3_Dot(n, rel_accel);
         double rel_t = Vec3_Dot(t, rel_accel);
-        VECTOR_AT(enum_data.b, k) = -rel_n;
-        VECTOR_AT(enum_data.b, k + M) = -rel_t;
+        
+        VECTOR_AT(enum_data.b, k) = rel_n;
+        VECTOR_AT(enum_data.b, k + M) = rel_t;
+        VECTOR_AT(enum_data.b, k + 2*M) = -rel_t;
     }
 
-    SolvePG(&enum_data.A, &enum_data.b, &enum_data.x, ProjectEnum);
+    for (int i = 0; i < 4*M; i++) {
+        MATRIX_AT(enum_data.A, i, i) += 1e-6;
+    }
 
-    double mse = 0.0;
+    SolveLemke(&enum_data.A, &enum_data.b, &enum_data.x);
+    
     for (int i = 0; i < M; i++) {
-        double a = 0.0;
-        for (int j = 0; j < M; j++) {
-            a += MATRIX_AT(enum_data.A, i, j) * VECTOR_AT(enum_data.x, j);
-        }
-        double diff = (a - VECTOR_AT(enum_data.b, i));
-        mse += diff*diff;
+        Contact &c = contacts[i];
+        memset(c.res_tangent_force, 0, sizeof(c.res_tangent_force));
+        c.res_normal_force = VECTOR_AT(enum_data.x, i);
+        c.res_tangent_force[enum_data.indices[i]] = VECTOR_AT(enum_data.x, i + M) - VECTOR_AT(enum_data.x, i + 2*M);
     }
 
-    return mse;
+    double err = 0.0;
+    for (int i = 0; i < M; i++) {
+        Contact &c = contacts[i];
+        Vec3 ai = Phys_GetBodyAccel(c.i, c.pos);
+        Vec3 aj = Phys_GetBodyAccel(c.j, c.pos);
+        Vec3 rel = Vec3_Sub(aj, ai);
+        err += rel.x*rel.x + rel.y*rel.y + rel.z*rel.z;
+    }
+
+    if (err < enum_data.best_err) {
+        enum_data.best_err = err;
+        enum_data.best_indices = enum_data.indices;
+    }
 }
 
 static void Solve_ForAllIndices(int pos)
@@ -396,23 +413,18 @@ static void Solve_ForAllIndices(int pos)
     if (pos == enum_data.indices.size())
     {
         int M = contacts.size();
-        double mse = Solve_ForIndices();
-
-        if (mse < enum_data.best_mse) {
-            enum_data.best_mse = mse;
-            enum_data.best_indices = enum_data.indices;
-        }
-
+        Solve_ForIndices();
         return;
     }
 
     for (int i = 0; i < N_TANGENTS; i++) {
         enum_data.indices[pos] = i;
         if (pos == 4) {
-            for (int j = 0; j <= 4; j++) {
-                printf("%d ", enum_data.indices[j]);
-            }
-            printf("\n");
+            printf("%d %d %d %d %d. CUR ERR: %lf\n",
+                enum_data.indices[0], enum_data.indices[1],
+                enum_data.indices[2], enum_data.indices[3],
+                enum_data.indices[4],
+                enum_data.best_err);
         }
         Solve_ForAllIndices(pos + 1);
     }
@@ -421,24 +433,36 @@ static void Solve_ForAllIndices(int pos)
 void Phys_SolveEnum()
 {
     int M = contacts.size();
-    enum_data.best_mse = DBL_MAX;
-    enum_data.best_indices.clear();
+    enum_data.best_err = DBL_MAX;
+    enum_data.best_indices.resize(M);
     enum_data.indices.resize(M);
-    Matrix_Init(&enum_data.A, 2*M, 2*M);
-    Vector_Init(&enum_data.b, 2*M);
-    Vector_Init(&enum_data.x, 2*M);
+    Matrix_Init(&enum_data.A, 4*M, 4*M);
+    Vector_Init(&enum_data.b, 4*M);
+    Vector_Init(&enum_data.x, 4*M);
+
     
+#ifdef ENUM_RND
+    for (int i = 0; i < ENUM_RND; i++) {
+        for (int j = 0; j < M; j++) {
+            enum_data.indices[j] = rand() % N_TANGENTS;
+        }
+        Solve_ForIndices();
+        
+        if ((i % 50) == 0) {
+            printf("%d %lf\n", i, enum_data.best_err);
+            fprintf(stderr, "%d %lf\n", i, enum_data.best_err);
+        }
+    }
+#else
     Solve_ForAllIndices(0);
+#endif
 
     enum_data.indices = enum_data.best_indices;
     Solve_ForIndices();
 
-    for (int i = 0; i < M; i++) {
-        Contact &c = contacts[i];
-        memset(c.res_tangent_force, 0, sizeof(c.res_tangent_force));
-        c.res_normal_force = VECTOR_AT(enum_data.x, i);
-        c.res_tangent_force[enum_data.indices[i]] = VECTOR_AT(enum_data.x, i + M);
-    }
+    //printf("Best indices: ");
+    //for (int i = 0; i < M; i++) printf("%d ", enum_data.best_indices[i]);
+    //printf("\n");
 
     Matrix_Free(&enum_data.A);
     Vector_Free(&enum_data.b);
@@ -479,4 +503,31 @@ void Phys_TangentsFromEuler()
             c.axes[i] = Vec3_Normalize(c.axes[i]);
         }
     }
+}
+
+Vec3 Phys_GetBodyAccel(int i, Vec3 point)
+{
+    Body* body = &bodies[i];
+    Vec3 inertia = CalcInertia(body);
+    Vec3 res = Phys_ForceEffectOnPoint(body->center, body->center, body->force, point, body->mass, inertia);
+
+    for (int j = 0; j < contacts.size(); j++) {
+        Contact &c = contacts[j];
+        Vec3 n_force = {0, 0, 0};
+        if (c.j == i)      n_force = Vec3_Scale(c.axes[AXIS_NORMAL], c.res_normal_force);
+        else if (c.i == i) n_force = Vec3_Scale(c.axes[AXIS_NORMAL], -c.res_normal_force);
+        Vec3 n_effect = Phys_ForceEffectOnPoint(c.pos, body->center, n_force, point, body->mass, inertia);
+        res = Vec3_Add(res, n_effect);
+
+        for (int k = 0; k < N_TANGENTS; k++) {
+            Vec3 t_force = {0, 0, 0};
+            if (c.j == i)      t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k]);
+            else if (c.i == i) t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], -c.res_tangent_force[k]);
+            
+            Vec3 t_effect = Phys_ForceEffectOnPoint(c.pos, body->center, t_force, point, body->mass, inertia);
+            res = Vec3_Add(res, t_effect);
+        }
+    }
+    
+    return res;
 }

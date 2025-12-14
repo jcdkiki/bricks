@@ -473,33 +473,6 @@ static Vec3 CalcInertia(Body *b)
     };
 }
 
-Vec3 GetBodyAccel(int i, Vec3 point)
-{
-    Body* body = &bodies[i];
-    Vec3 inertia = CalcInertia(body);
-    Vec3 res = Phys_ForceEffectOnPoint(body->center, body->center, body->force, point, body->mass, inertia);
-
-    for (int j = 0; j < contacts.size(); j++) {
-        Contact &c = contacts[j];
-        Vec3 n_force = {0, 0, 0};
-        if (c.j == i)      n_force = Vec3_Scale(c.axes[AXIS_NORMAL], c.res_normal_force);
-        else if (c.i == i) n_force = Vec3_Scale(c.axes[AXIS_NORMAL], -c.res_normal_force);
-        Vec3 n_effect = Phys_ForceEffectOnPoint(c.pos, body->center, n_force, point, body->mass, inertia);
-        res = Vec3_Add(res, n_effect);
-
-        for (int k = 0; k < N_TANGENTS; k++) {
-            Vec3 t_force = {0, 0, 0};
-            if (c.j == i)      t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k]);
-            else if (c.i == i) t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], -c.res_tangent_force[k]);
-            
-            Vec3 t_effect = Phys_ForceEffectOnPoint(c.pos, body->center, t_force, point, body->mass, inertia);
-            res = Vec3_Add(res, t_effect);
-        }
-    }
-    
-    return res;
-}
-
 #define N_BODY_COLORS 16
 static Vec3 body_colors[N_BODY_COLORS] = {
     {0.7, 0.5, 0.5}, {0.5, 0.7, 0.5}, {0.5, 0.5, 0.7}, {0.7, 0.7, 0.5}, {0.5, 0.7, 0.7}, {0.7, 0.5, 0.7},
@@ -665,8 +638,8 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         for (int i = 0; i < contacts.size(); i++) {
             if (settings.less_arrows && i != settings.selected_contact) continue;
             Contact &c = contacts[i];
-            Vec3 i_accel = GetBodyAccel(c.i, c.pos);
-            Vec3 j_accel = GetBodyAccel(c.j, c.pos);
+            Vec3 i_accel = Phys_GetBodyAccel(c.i, c.pos);
+            Vec3 j_accel = Phys_GetBodyAccel(c.j, c.pos);
             Vec3 diff = Vec3_Sub(j_accel, i_accel);
             if (Vec3_Length(diff) > 1e-6)
                 DrawArrow(c.pos, diff);
@@ -864,23 +837,6 @@ void Render_Draw()
     ImGui::SetNextWindowSize(ImVec2(MENU_WIDTH, WIN_HEIGHT), ImGuiCond_Always);
     ImGui::Begin("Settings", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
     ImGui::Text("Method: " METHOD_NAME);
-    if (ImGui::CollapsingHeader("Help")) {
-        ImGui::SeparatorText("3D view");
-        ImGui::Text("Right mouse button: look around");
-        ImGui::Text("  + WASD: move");
-        ImGui::Text("Left click: select body");
-        ImGui::Text("Shift + Left click: select contact point");
-        
-        ImGui::SeparatorText("2D view");
-        ImGui::Text("Right mouse button: move around");
-        ImGui::Text("Left mouse button: manipulate objects");
-        ImGui::Text("  + Shift: snap to the grid");
-        ImGui::Text("  + Alt: scale selected body");
-        ImGui::Text("  + Ctrl: rotate selected object");
-
-        ImGui::SeparatorText("Menu");
-        ImGui::Text("Self-explanatory");
-    }
     if (ImGui::CollapsingHeader("Show")) {
         ImGui::Checkbox("Ids", &settings.show_ids); ImGui::SameLine();
         ImGui::Checkbox("Axes", &settings.show_axes);
@@ -1016,6 +972,11 @@ void Render_Draw()
         }
         ImGui::Text("tangent forces sum: %lf", sum);
         ImGui::Text("tangent force norm: %lf", sqrt(norm2));
+
+        ImGui::Text("normal force: %lf", c->res_normal_force);
+        for (int i = 0; i < N_TANGENTS; i++) {
+            ImGui::Text("tangent force %d: %lf", i, c->res_tangent_force[i]);
+        }
 
         if (ImGui::Button("Delete"))
             DeleteContact();
