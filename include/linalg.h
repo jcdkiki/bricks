@@ -4,12 +4,6 @@
 #include <cstring>
 #include <math.h>
 
-#ifdef LINALG_USE_SIMD
-#include "linalg_simd.h"
-#else
-#include "linalg_trad.h"
-#endif
-
 #define MATRIX_AT(mat, row, col) ((mat).data[(int)(row) * (mat).cols + (int)(col)])   
 #define VECTOR_AT(vec, i) ((vec).data[(int)(i)])
 

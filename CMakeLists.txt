@@ -36,5 +36,35 @@ add_library(imgui
 target_include_directories(imgui PUBLIC ${imgui_external_SOURCE_DIR})
 target_link_libraries(imgui PUBLIC -lGL glfw)
 
-add_subdirectory(test)
-add_subdirectory(src)
+add_library(
+	physics
+	src/physics.cpp
+	src/linalg.cpp
+	src/solvers/lemke.cpp
+	src/solvers/pg.cpp
+)
+target_include_directories(physics PUBLIC ./include)
+
+add_executable(
+    tests 
+    test/test_lemke.cpp
+    test/test_pg.cpp
+    test/test_linalg.cpp
+)
+target_link_libraries(tests PRIVATE gtest gtest_main physics)
+
+add_executable(
+	editor
+	src/editor/glad.c
+	src/editor/main.cpp
+	src/editor/render.cpp
+)
+target_link_libraries(editor PRIVATE imgui glfw physics)
+
+add_executable(
+	gen_bricks
+	src/gen_bricks.cpp
+)
+target_link_libraries(gen_bricks PRIVATE physics)
+
+add_test(NAME tests COMMAND run_tests)
