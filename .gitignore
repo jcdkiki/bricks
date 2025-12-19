@@ -5,3 +5,6 @@ compile_commands.json
 text/*.aux
 text/*.log
 text/*.out
+text/*.nav
+text/*.snm
+text/*.toc
