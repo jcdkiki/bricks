@@ -21,31 +21,10 @@
 #define PHYSICS_H
 
 #include "linalg.h"
+#include "solvers.h"
 #include <vector>
 
-//#define USE_LEMKE
-//#define USE_PG
-#define USE_ENUM
-
-#define ENUM_RND 50000
-
-#if defined(USE_PG)
-#define N_TANGENTS 2
-#else
-#define N_TANGENTS 10
-#endif
-
-#if defined(USE_PG)
-#define METHOD_NAME "PG"
-#elif defined(USE_LEMKE)
-#define METHOD_NAME "LEMKE"
-#elif defined(USE_ENUM)
-    #ifdef ENUM_RND
-    #define METHOD_NAME "ENUM RND"
-    #else
-    #define METHOD_NAME "ENUM"
-    #endif
-#endif
+#define MAX_N_TANGENTS 32
 
 #define AXIS_NORMAL 0
 #define AXIS_TANGENT1 1
@@ -55,13 +34,13 @@ struct Contact {
     int i, j;
     double mu;
 
-    Vec3 axes[N_TANGENTS + 1];
+    Vec3 axes[MAX_N_TANGENTS + 1];
 
     Vec3 pos;
     Vec3 angles;
 
     double res_normal_force;
-    double res_tangent_force[N_TANGENTS];
+    double res_tangent_force[MAX_N_TANGENTS];
 };
 
 struct Body {
@@ -73,10 +52,14 @@ struct Body {
     Vec3 euler;
 };
 
+
 extern std::vector<Body> bodies;
 extern std::vector<Contact> contacts;
+extern int n_tangents;
 
-void Phys_Solve();
+void Phys_SolveLemke();
+void Phys_SolveProjected(SolveProjectedFunc func);
+void Phys_SolveEnum();
 
 void Phys_TangentsFromEuler();
 void Phys_SaveToFile(const char *filename);

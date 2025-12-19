@@ -7,14 +7,13 @@
 #include <stdlib.h>
 #include <math.h>
 #include "solvers.h"
-
-#include <mutex>
-#include <thread>
+#include "good_assert.h" 
 
 #define GRAVITY 9.8
 
 std::vector<Body> bodies;
 std::vector<Contact> contacts;
+int n_tangents = 4;
 
 void Phys_SaveToFile(const char *filename)
 {
@@ -127,7 +126,7 @@ void Phys_SolveLemke()
 {
     Vector x;
     int M = contacts.size();
-    int MM = (2 + N_TANGENTS*2)*M;
+    int MM = (2 + n_tangents*2)*M;
     int cur_row = 0;
 
     Matrix I;
@@ -144,7 +143,7 @@ void Phys_SolveLemke()
     Matrix Ann;
     ProjectForces(&Ann, AXIS_NORMAL, AXIS_NORMAL);
     Matrix_Put(&A, &Ann, cur_row, 0);
-    for (int i = 0; i < N_TANGENTS; i++) {
+    for (int i = 0; i < n_tangents; i++) {
         Matrix Ant;
         ProjectForces(&Ant, AXIS_NORMAL, AXIS_TANGENT1 + i);
         Matrix_Put(&A, &Ant, cur_row, (2*i+1)*M);
@@ -156,7 +155,7 @@ void Phys_SolveLemke()
     cur_row += M;
 
     // mid
-    for (int i = 0; i < N_TANGENTS; i++) {
+    for (int i = 0; i < n_tangents; i++) {
         Matrix Atn;
         ProjectForces(&Atn, AXIS_TANGENT1 + i, AXIS_NORMAL);
         Matrix_Put(&A, &Atn, cur_row, 0);
@@ -164,7 +163,7 @@ void Phys_SolveLemke()
         Matrix_Put(&A, &Atn, cur_row+M, 0);
 
         int cur_col = M;
-        for (int j = 0; j < N_TANGENTS; j++) {
+        for (int j = 0; j < n_tangents; j++) {
             Matrix Att;
             ProjectForces(&Att, AXIS_TANGENT1 + i, AXIS_TANGENT1 + j);
             
@@ -194,7 +193,7 @@ void Phys_SolveLemke()
     for (int i = 0; i < M; i++) {
         for(int j=0; j<M; j++) MATRIX_AT(I, i, j) = (i==j) ? -1.0 : 0.0;
     }
-    for (int i = 0; i < 2*N_TANGENTS; i ++)
+    for (int i = 0; i < 2*n_tangents; i ++)
         Matrix_Put(&A, &I, cur_row, (i+1)*M);
     
     for (int k = 0; k < contacts.size(); k++) {
@@ -212,7 +211,7 @@ void Phys_SolveLemke()
         VECTOR_AT(b, k) = Vec3_Dot(ck->axes[AXIS_NORMAL], rel_accel);
         
         cur_row = M;
-        for (int i = 0; i < N_TANGENTS; i++) {
+        for (int i = 0; i < n_tangents; i++) {
             Vec3 tik = ck->axes[AXIS_TANGENT1 + i];
             double jti_a = Vec3_Dot(tik, rel_accel);
             VECTOR_AT(b, cur_row + k) = jti_a;
@@ -233,7 +232,7 @@ void Phys_SolveLemke()
         c.res_normal_force = fn;
 
         int cur_row = M;
-        for (int j = 0; j < N_TANGENTS; j++) {
+        for (int j = 0; j < n_tangents; j++) {
             double ftj = VECTOR_AT(x, cur_row + i) - VECTOR_AT(x, cur_row + M + i);
             c.res_tangent_force[j] = ftj;
             cur_row += 2*M;
@@ -264,9 +263,7 @@ static void Project(Vector *x)
     }
 }
 
-typedef void (*SolveFunc)(Matrix *A, Vector *b, Vector *x, ProjectFunc project);
-
-void Phys_SolveProjectedWithFunc(SolveFunc solve_func)
+void Phys_SolveProjected(SolveProjectedFunc solve_func)
 {
     int M = contacts.size();
     int cur_row = 0;
@@ -278,8 +275,8 @@ void Phys_SolveProjectedWithFunc(SolveFunc solve_func)
     Vector_Init(&x, 3*M);
 
     // mid
-    for (int i = 0; i < N_TANGENTS+1; i++) {
-        for (int j = 0; j < N_TANGENTS+1; j++) {
+    for (int i = 0; i < n_tangents+1; i++) {
+        for (int j = 0; j < n_tangents+1; j++) {
             Matrix Aij;
             ProjectForces(&Aij, i, j);
             Matrix_Put(&A, &Aij, i*M, j*M);
@@ -307,7 +304,6 @@ void Phys_SolveProjectedWithFunc(SolveFunc solve_func)
     }
 
     solve_func(&A, &b, &x, Project);
-    //Matrix_PrintMany(3, &A, "A", &x, "x = ", &b, "b");
     
     for (int i = 0; i < M; i++) {
         Contact &c = contacts[i];
@@ -331,80 +327,137 @@ struct {
     std::vector<int> indices;
 } enum_data;
 
+Vec3 Phys_GetBodyAccelEx(int i, Vec3 point, Vector &forces)
+{
+    int M = contacts.size();
+    Body* body = &bodies[i];
+    Vec3 inertia = CalcInertia(body);
+    Vec3 res = Phys_ForceEffectOnPoint(body->center, body->center, body->force, point, body->mass, inertia);
+
+    for (int j = 0; j < M; j++) {
+        Contact &c = contacts[j];
+        Vec3 n_force = {0, 0, 0};
+        if (c.j == i)      n_force = Vec3_Scale(c.axes[AXIS_NORMAL], VECTOR_AT(forces, j));
+        else if (c.i == i) n_force = Vec3_Scale(c.axes[AXIS_NORMAL], -VECTOR_AT(forces, j));
+        Vec3 n_effect = Phys_ForceEffectOnPoint(c.pos, body->center, n_force, point, body->mass, inertia);
+        res = Vec3_Add(res, n_effect);
+
+        Vec3 t_force = {0, 0, 0};
+        if (c.j == i)      t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + enum_data.indices[j]], VECTOR_AT(forces, j + M) - VECTOR_AT(forces, j + 2*M));
+        else if (c.i == i) t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + enum_data.indices[j]], -VECTOR_AT(forces, j + M) + VECTOR_AT(forces, j + 2*M));
+        
+        Vec3 t_effect = Phys_ForceEffectOnPoint(c.pos, body->center, t_force, point, body->mass, inertia);
+        res = Vec3_Add(res, t_effect);
+    }
+    
+    return res;
+}
 
 static void Solve_ForIndices()
 {
+    Vector x;
     int M = contacts.size();
-    
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < M; j++) {
-            double nn = ProjectForce(AXIS_NORMAL, AXIS_NORMAL, i, j);
-            double nt = ProjectForce(AXIS_NORMAL, AXIS_TANGENT1 + enum_data.indices[j], i, j);
-            double tn = ProjectForce(AXIS_TANGENT1 + enum_data.indices[i], AXIS_NORMAL, i, j);
-            double tt = ProjectForce(AXIS_TANGENT1 + enum_data.indices[i], AXIS_TANGENT1 + enum_data.indices[j], i, j);
+ 
+    for (int k = 0; k < contacts.size(); k++) {
+        for (int l = 0; l < contacts.size(); l++) {
+            double nn = ProjectForce(AXIS_NORMAL, AXIS_NORMAL, k, l);
+            double nt = ProjectForce(AXIS_NORMAL, AXIS_TANGENT1 + enum_data.indices[l], k, l);
+            double tn = ProjectForce(AXIS_TANGENT1 + enum_data.indices[k], AXIS_NORMAL, k, l);
+            double tt = ProjectForce(AXIS_TANGENT1 + enum_data.indices[k], AXIS_TANGENT1 + enum_data.indices[l], k, l);
+            
+            MATRIX_AT(enum_data.A, k, l) = nn;
+            MATRIX_AT(enum_data.A, k, l + M) = nt;
+            MATRIX_AT(enum_data.A, k, l + 2*M) = -nt;
 
-            MATRIX_AT(enum_data.A, i, j) = nn;
-            MATRIX_AT(enum_data.A, i, j + M) = nt;
-            MATRIX_AT(enum_data.A, i, j + 2*M) = -nt;
+            MATRIX_AT(enum_data.A, k + M, l) = tn;
+            MATRIX_AT(enum_data.A, k + 2*M, l) = -tn;
 
-            MATRIX_AT(enum_data.A, i + M, j) = tn;
-            MATRIX_AT(enum_data.A, i + M, j + M) = tt;
-            MATRIX_AT(enum_data.A, i + M, j + 2*M) = -tt;
-
-            MATRIX_AT(enum_data.A, i + 2*M, j) = -tn;
-            MATRIX_AT(enum_data.A, i + 2*M, j + M) = -tt;
-            MATRIX_AT(enum_data.A, i + 2*M, j + 2*M) = tt;
+            MATRIX_AT(enum_data.A, k + M, l + M) = tt;
+            MATRIX_AT(enum_data.A, k + 2*M, l + 2*M) = tt;
+            MATRIX_AT(enum_data.A, k + 2*M, l + M) = -tt;
+            MATRIX_AT(enum_data.A, k + M, l + 2*M) = -tt;
         }
-
-        MATRIX_AT(enum_data.A, i + M, i + 3*M) = 1;
-        MATRIX_AT(enum_data.A, i + 2*M, i + 3*M) = 1;
-
-        MATRIX_AT(enum_data.A, i + 3*M, i) = contacts[i].mu;
-        MATRIX_AT(enum_data.A, i + 3*M, i + M) = -1;
-        MATRIX_AT(enum_data.A, i + 3*M, i + 2*M) = -1;
     }
 
+    for (int i = 0; i < M; i++) {
+        MATRIX_AT(enum_data.A, M + i, 3*M + i) = 1.0;
+        MATRIX_AT(enum_data.A, 2*M + i, 3*M + i) = 1.0;
+
+        MATRIX_AT(enum_data.A, 3*M + i, i) = contacts[i].mu + 1e-6;
+        MATRIX_AT(enum_data.A, 3*M + i, M + i) = -1.0;
+        MATRIX_AT(enum_data.A, 3*M + i, 2*M + i) = -1.0;
+    }
+    
     for (int k = 0; k < contacts.size(); k++) {
         Contact *ck = &contacts[k];
-        Vec3 rel_accel = Vec3_Sub(
-            Vec3_Scale(bodies[ck->j].force, 1.0 / bodies[ck->j].mass),
-            Vec3_Scale(bodies[ck->i].force, 1.0 / bodies[ck->i].mass));
-        
-        Vec3 n = ck->axes[AXIS_NORMAL];
-        Vec3 t = ck->axes[enum_data.indices[k]];
-        double rel_n = Vec3_Dot(n, rel_accel);
-        double rel_t = Vec3_Dot(t, rel_accel);
-        
-        VECTOR_AT(enum_data.b, k) = rel_n;
-        VECTOR_AT(enum_data.b, k + M) = rel_t;
-        VECTOR_AT(enum_data.b, k + 2*M) = -rel_t;
-    }
+        Body *bi = &bodies[ck->i];
+        Body *bj = &bodies[ck->j];
 
-    for (int i = 0; i < 4*M; i++) {
+        Vec3 inertia_i = CalcInertia(bi);
+        Vec3 inertia_j = CalcInertia(bj);
+
+        Vec3 i_effect = Phys_ForceEffectOnPoint(bi->center, bi->center, bi->force, ck->pos, bi->mass, inertia_i);
+        Vec3 j_effect = Phys_ForceEffectOnPoint(bj->center, bj->center, bj->force, ck->pos, bj->mass, inertia_j);
+        
+        Vec3 rel_accel = Vec3_Sub(j_effect, i_effect);
+        VECTOR_AT(enum_data.b, k) = Vec3_Dot(ck->axes[AXIS_NORMAL], rel_accel);
+        
+        Vec3 tik = ck->axes[AXIS_TANGENT1 + enum_data.indices[k]];
+        double jti_a = Vec3_Dot(tik, rel_accel);
+        VECTOR_AT(enum_data.b, M + k) = jti_a;
+        VECTOR_AT(enum_data.b, 2*M + k) = -jti_a;
+    }
+    
+    for (int i = 0; i < enum_data.A.rows; i++) {
         MATRIX_AT(enum_data.A, i, i) += 1e-6;
     }
 
     SolveLemke(&enum_data.A, &enum_data.b, &enum_data.x);
-    
-    for (int i = 0; i < M; i++) {
-        Contact &c = contacts[i];
-        memset(c.res_tangent_force, 0, sizeof(c.res_tangent_force));
-        c.res_normal_force = VECTOR_AT(enum_data.x, i);
-        c.res_tangent_force[enum_data.indices[i]] = VECTOR_AT(enum_data.x, i + M) - VECTOR_AT(enum_data.x, i + 2*M);
-    }
 
+    // { mu * f_n - |f_t| >= 0
+    // { |a_t| (mu * f_n - |f_t|) = 0
+    // { |a_t| |f_t| + a_t * f_t = 0
+    
     double err = 0.0;
     for (int i = 0; i < M; i++) {
         Contact &c = contacts[i];
-        Vec3 ai = Phys_GetBodyAccel(c.i, c.pos);
-        Vec3 aj = Phys_GetBodyAccel(c.j, c.pos);
-        Vec3 rel = Vec3_Sub(aj, ai);
-        err += rel.x*rel.x + rel.y*rel.y + rel.z*rel.z;
+        Vec3 a_i = Phys_GetBodyAccelEx(c.i, c.pos, enum_data.x);
+        Vec3 a_j = Phys_GetBodyAccelEx(c.j, c.pos, enum_data.x);
+        Vec3 a = Vec3_Sub(a_j, a_i);
+        
+        Vec3 normal = c.axes[AXIS_NORMAL];
+        Vec3 t_basis1 = c.axes[AXIS_TANGENT1 + enum_data.indices[i]];
+        Vec3 t_basis2 = Vec3_Cross(normal, t_basis1);
+        
+        double ft_plus = VECTOR_AT(enum_data.x, i + M);
+        double ft_minus = VECTOR_AT(enum_data.x, i + 2*M);
+
+        Vec2 at = { Vec3_Dot(a, t_basis1), Vec3_Dot(a, t_basis2) };
+        Vec2 ft = { ft_plus - ft_minus, 0 };
+        
+        double ft_len = ft_plus + ft_minus;
+        double fn_len = VECTOR_AT(enum_data.x, i);
+        double at_len = Vec2_Length(at);
+        double an_len = Vec3_Dot(a, normal);
+
+        // err += -std::min(0.0, fn_len);
+        // err += -std::min(0.0, an_len);
+        // err += fabs(fn_len * an_len);
+        // err += -std::max(0.0, c.mu * fn_len - ft_len);
+        err += fabs(at_len * (c.mu * fn_len - ft_len));
+        err += fabs(at_len * ft_len + Vec2_Dot(at, ft));
     }
 
     if (err < enum_data.best_err) {
         enum_data.best_err = err;
         enum_data.best_indices = enum_data.indices;
+
+        for (int i = 0; i < M; i++) {
+            Contact &c = contacts[i];
+            memset(c.res_tangent_force, 0, sizeof(c.res_tangent_force));
+            c.res_normal_force = VECTOR_AT(enum_data.x, i);
+            c.res_tangent_force[enum_data.indices[i]] = VECTOR_AT(enum_data.x, i + M) - VECTOR_AT(enum_data.x, i + 2*M);
+        }
     }
 }
 
@@ -417,14 +470,17 @@ static void Solve_ForAllIndices(int pos)
         return;
     }
 
-    for (int i = 0; i < N_TANGENTS; i++) {
+    for (int i = 0; i < n_tangents; i++) {
         enum_data.indices[pos] = i;
         if (pos == 4) {
-            printf("%d %d %d %d %d. CUR ERR: %lf\n",
-                enum_data.indices[0], enum_data.indices[1],
-                enum_data.indices[2], enum_data.indices[3],
+            printf("%d %d %d %d %d: cur_err=%0.015lf\n",
+                enum_data.indices[0],
+                enum_data.indices[1],
+                enum_data.indices[2],
+                enum_data.indices[3],
                 enum_data.indices[4],
-                enum_data.best_err);
+                enum_data.best_err
+            );
         }
         Solve_ForAllIndices(pos + 1);
     }
@@ -459,6 +515,12 @@ void Phys_SolveEnum()
 
     enum_data.indices = enum_data.best_indices;
     Solve_ForIndices();
+    
+    Matrix_Print(&enum_data.A);
+    printf("\n\n");
+    Vector_Print(&enum_data.b);
+    printf("\n\n");
+    Vector_Print(&enum_data.x);
 
     //printf("Best indices: ");
     //for (int i = 0; i < M; i++) printf("%d ", enum_data.best_indices[i]);
@@ -467,17 +529,6 @@ void Phys_SolveEnum()
     Matrix_Free(&enum_data.A);
     Vector_Free(&enum_data.b);
     Vector_Free(&enum_data.x);
-}
-
-void Phys_Solve()
-{
-    #if defined(USE_LEMKE)
-    Phys_SolveLemke();
-    #elif defined(USE_PG)
-    Phys_SolveProjectedWithFunc(SolvePG);
-    #elif defined(USE_ENUM)
-    Phys_SolveEnum();
-    #endif
 }
 
 void Phys_TangentsFromEuler()
@@ -493,13 +544,13 @@ void Phys_TangentsFromEuler()
         Vec3 T0 = {cy*cz, cy*sz, -sy};
         Vec3 T1 = Vec3_Cross(T0, c.axes[AXIS_NORMAL]);
         
-        for (int i = 0; i < N_TANGENTS; i++) {
-            double alpha = i * M_PI / (double)N_TANGENTS;
+        for (int i = 0; i < n_tangents; i++) {
+            double alpha = i * M_PI / (double)n_tangents;
             double cs = cos(alpha), sn = sin(alpha);
             c.axes[AXIS_TANGENT1 + i] = Vec3_Add(Vec3_Scale(T0, cs), Vec3_Scale(T1, sn));
         }
 
-        for (int i = 0; i < N_TANGENTS+1; i++) {
+        for (int i = 0; i < n_tangents+1; i++) {
             c.axes[i] = Vec3_Normalize(c.axes[i]);
         }
     }
@@ -519,7 +570,7 @@ Vec3 Phys_GetBodyAccel(int i, Vec3 point)
         Vec3 n_effect = Phys_ForceEffectOnPoint(c.pos, body->center, n_force, point, body->mass, inertia);
         res = Vec3_Add(res, n_effect);
 
-        for (int k = 0; k < N_TANGENTS; k++) {
+        for (int k = 0; k < n_tangents; k++) {
             Vec3 t_force = {0, 0, 0};
             if (c.j == i)      t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], c.res_tangent_force[k]);
             else if (c.i == i) t_force = Vec3_Scale(c.axes[AXIS_TANGENT1 + k], -c.res_tangent_force[k]);

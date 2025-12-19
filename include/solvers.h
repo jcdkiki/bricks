@@ -4,6 +4,7 @@
 #include "linalg.h"
 
 typedef void (*ProjectFunc)(Vector *x);
+typedef void (*SolveProjectedFunc)(Matrix *A, Vector *b, Vector *x, ProjectFunc project);
 
 // Mz + q >= 0
 // z >= 0

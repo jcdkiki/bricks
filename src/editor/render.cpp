@@ -6,6 +6,7 @@
 #include <GLFW/glfw3.h>
 #include <string>
 #include <filesystem>
+#include <thread>
 
 #include "linalg.h"
 #include "physics.h"
@@ -83,15 +84,22 @@ CopyBuffer copy_buffer;
 static Camera camera = {{0, 0, 0}, 0, 0};
 static bool keys[512] = {false};
 
+#define MENU_WIDTH 350
+
+static Vec2 win_size { 1280, 720 };
+static Vec2 view_size { (1280 - MENU_WIDTH) / 2.0, 720 / 2.0 };
+
 static double last_mouse_x, last_mouse_y;
 static double mouse_dx, mouse_dy;
 
 static bool first_mouse = true;
 static bool right_mouse_down = false;
 static bool left_mouse_down = false;
+static bool is_running = false;
 
-#define MENU_WIDTH 350
-Vec2 view_size { (WIN_WIDTH - MENU_WIDTH)/2.f, WIN_HEIGHT/2.f };
+#define VIEW_NONE -2
+#define VIEW_PERSPECTIVE -1
+#define VIEW_ORTHO 0
 
 struct Settings {
     float line_len { 0.1f };
@@ -114,6 +122,8 @@ struct Settings {
     bool show_input_rel_accel { false };
 
     bool highlight_selected { true };
+
+    int full_mode { VIEW_NONE };
 };
 
 static Settings settings;
@@ -199,19 +209,26 @@ static Vec3 WorldToClip(Vec3 world, const float *view, const float *proj)
 
 static Vec3 ClipToScreen(Vec3 clip)
 {
+    Vec2 vs = view_size;
+    if (settings.full_mode != VIEW_NONE) {
+        vs.x *= 2;
+        vs.y *= 2;
+    }
+
     return {
-        MENU_WIDTH + (clip.x / clip.z + 1.0f) * 0.5f * view_size.x,
-        (1.0f - clip.y / clip.z) * 0.5f * view_size.y,
+        MENU_WIDTH + (clip.x / clip.z + 1.0f) * 0.5f * vs.x,
+        (1.0f - clip.y / clip.z) * 0.5f * vs.y,
         0.0f
     };
 }
 
-#define VIEW_NONE -2
-#define VIEW_PERSPECTIVE -1
-#define VIEW_ORTHO 0
-
 int GetViewIdx()
 {
+    if (settings.full_mode != VIEW_NONE) {
+        if (last_mouse_x > MENU_WIDTH) return settings.full_mode;
+        return VIEW_NONE;
+    }
+
     if (last_mouse_x > MENU_WIDTH && last_mouse_x < MENU_WIDTH+view_size.x) {
         if (last_mouse_y > view_size.y) return VIEW_ORTHO + 1;
         return VIEW_PERSPECTIVE;
@@ -540,12 +557,12 @@ void FrameBuffer::Unbind() const
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Show_View(FrameBuffer *fb, int px, int py, const char *name)
+void Show_View(FrameBuffer *fb, ImVec2 pos, ImVec2 size, const char *name)
 {
-    ImGui::SetNextWindowPos(ImVec2(MENU_WIDTH + px*view_size.x, + py*view_size.y), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2((WIN_WIDTH - MENU_WIDTH) / 2.f, WIN_HEIGHT / 2.f), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(size, ImGuiCond_Always);
     ImGui::Begin(name, NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize);
-    ImGui::SetNextItemWidth((WIN_WIDTH - MENU_WIDTH) / 2.f);
+    ImGui::SetNextItemWidth(view_size.x);
     ImGui::BeginChild((std::string("render_") + name).c_str());	
     ImGui::Image(
         (ImTextureID)fb->getFrameTexture(), 
@@ -556,9 +573,24 @@ void Show_View(FrameBuffer *fb, int px, int py, const char *name)
     ImGui::End();
 }
 
+void Show_View2x2(FrameBuffer *fb, int px, int py, const char *name)
+{
+    Show_View(fb, ImVec2(MENU_WIDTH + px*view_size.x, + py*view_size.y), ImVec2(view_size.x, view_size.y), name);
+}
+
+void Show_ViewFull(FrameBuffer *fb, const char *name)
+{
+    Show_View(fb, ImVec2(MENU_WIDTH, 0), ImVec2(view_size.x*2, view_size.y*2), name);
+}
+
 void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
 {
-    glViewport(0, 0, view_size.x, view_size.y);
+    if (settings.full_mode != VIEW_NONE) {
+        glViewport(0, 0, view_size.x*2, view_size.y*2);
+    }
+    else {
+        glViewport(0, 0, view_size.x, view_size.y);
+    }
     glClearColor(33.0f / 255.f, 37.0f / 255.f, 43.0f / 255.f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
@@ -617,6 +649,11 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         }
     }
 
+    if (is_running) {
+        glEnable(GL_LINE_STIPPLE);
+        glLineStipple(1, 0xCCCC); 
+    }
+
     if (settings.show_output_forces) {
         glColor3f(1.f, 1.f, 0.3f);
         for (int i = 0; i < contacts.size(); i++) {
@@ -625,7 +662,7 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
             if (fabs(c->res_normal_force) > 1e-4)
                 DrawArrow(c->pos, Vec3_Scale(c->axes[AXIS_NORMAL], c->res_normal_force));
 
-            for (int j = 0; j < N_TANGENTS; j++) {
+            for (int j = 0; j < n_tangents; j++) {
                 if (fabs(c->res_tangent_force[j]) > 1e-4) {
                     DrawArrow(c->pos, Vec3_Scale(c->axes[AXIS_TANGENT1 + j], c->res_tangent_force[j]));
                 }
@@ -646,6 +683,8 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         }
     }
 
+    glDisable(GL_LINE_STIPPLE);
+
     if (settings.show_axes) {
         for (int i = 0; i < contacts.size(); i++) {
             if (settings.selected_contact == i && settings.highlight_selected) {
@@ -659,7 +698,7 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
             
             Contact *c = &contacts[i];
             glBegin(GL_LINES);
-            for (int j = 0; j < N_TANGENTS+1; j++) {
+            for (int j = 0; j < n_tangents+1; j++) {
                 Vec3 v = Vec3_Scale(c->axes[j], 0.25);
                 glVertex3f(c->pos.x, c->pos.y, c->pos.z);
                 glVertex3f(c->pos.x + v.x, c->pos.y + v.y, c->pos.z + v.z);
@@ -681,12 +720,18 @@ void Render_Perspective()
     Render_Scene(fb_perspective, proj, view);
 
     if (settings.show_ids) {
+        Vec2 vs = view_size;
+        if (settings.full_mode != VIEW_NONE) {
+            vs.x *= 2;
+            vs.y *= 2;
+        }
+
         ImDrawList *draw_list = ImGui::GetForegroundDrawList();
         for (int i = 0; i < bodies.size(); i++) {
             Vec3 clip = WorldToClip(bodies[i].center, view, proj);
             if (clip.z > 0) {
                 Vec3 screen = ClipToScreen(clip);
-                if (screen.x >= MENU_WIDTH && screen.y >= 0 && screen.x < MENU_WIDTH+view_size.x && screen.y < view_size.y) {
+                if (screen.x >= MENU_WIDTH && screen.y >= 0 && screen.x < MENU_WIDTH+vs.x && screen.y < vs.y) {
                     std::string s = std::to_string(i);
                     ImVec2 sz = ImGui::CalcTextSize(s.c_str());
                     draw_list->AddText(ImVec2(screen.x - sz.x/2.0, screen.y - sz.y/2.0), 0xFFFFFFFF, s.c_str());
@@ -774,6 +819,41 @@ void CopyContact(Contact *contact)
     contacts.back().pos = Vec3_Add(camera.pos, Vec3_Scale(camera.forward, 5.0));
 }
 
+void InitFrameBuffers2x2()
+{
+    for (int i = 0; i < 3; i++) {
+        delete ortho_views[i].fb;
+        ortho_views[i].fb = new FrameBuffer(view_size.x, view_size.y);
+    }
+
+    delete fb_perspective;
+    fb_perspective = new FrameBuffer(view_size.x, view_size.y);
+}
+
+void InitFrameBufferFullMode()
+{
+    if (settings.full_mode == VIEW_PERSPECTIVE) {
+        delete fb_perspective;
+        fb_perspective = new FrameBuffer(view_size.x * 2, view_size.y * 2);
+    }
+    else if (settings.full_mode >= VIEW_ORTHO) {
+        delete ortho_views[settings.full_mode].fb;
+        ortho_views[settings.full_mode].fb = new FrameBuffer(view_size.x * 2, view_size.y * 2);
+    }
+}
+
+void Render_OnResize(int width, int height)
+{
+    printf("RESIZE: %d %d\n", width, height);
+    win_size.x = width;
+    win_size.y = height;
+    view_size.x = (width - MENU_WIDTH) / 2.0;
+    view_size.y = height / 2.0;
+
+    if (settings.full_mode == VIEW_NONE) InitFrameBuffers2x2();
+    else InitFrameBufferFullMode();
+}
+
 void Render_Draw()
 {
     if (!inited) {
@@ -823,20 +903,29 @@ void Render_Draw()
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    Render_Perspective();
-    Render_Ortho(ortho_views[0]);
-    Render_Ortho(ortho_views[1]);
-    Render_Ortho(ortho_views[2]);
-    
-    Show_View(fb_perspective, 0, 0, "persp");
-    Show_View(ortho_views[0].fb, 1, 0, ortho_views[0].name);
-    Show_View(ortho_views[1].fb, 0, 1, ortho_views[1].name);
-    Show_View(ortho_views[2].fb, 1, 1, ortho_views[2].name);
+    if (settings.full_mode == VIEW_PERSPECTIVE) {
+        Render_Perspective();
+        Show_ViewFull(fb_perspective, "persp");
+    }
+    else if (settings.full_mode >= VIEW_ORTHO) {
+        Render_Ortho(ortho_views[settings.full_mode]);
+        Show_ViewFull(ortho_views[settings.full_mode].fb, ortho_views[settings.full_mode].name);
+    }
+    else {
+        Render_Perspective();
+        Render_Ortho(ortho_views[0]);
+        Render_Ortho(ortho_views[1]);
+        Render_Ortho(ortho_views[2]);
+        
+        Show_View2x2(fb_perspective, 0, 0, "persp");
+        Show_View2x2(ortho_views[0].fb, 1, 0, ortho_views[0].name);
+        Show_View2x2(ortho_views[1].fb, 0, 1, ortho_views[1].name);
+        Show_View2x2(ortho_views[2].fb, 1, 1, ortho_views[2].name);
+    }
 
     ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(MENU_WIDTH, WIN_HEIGHT), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(MENU_WIDTH, win_size.y), ImGuiCond_Always);
     ImGui::Begin("Settings", NULL, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
-    ImGui::Text("Method: " METHOD_NAME);
     if (ImGui::CollapsingHeader("Show")) {
         ImGui::Checkbox("Ids", &settings.show_ids); ImGui::SameLine();
         ImGui::Checkbox("Axes", &settings.show_axes);
@@ -877,9 +966,22 @@ void Render_Draw()
             bodies.clear();
         }
     }
+    if (ImGui::CollapsingHeader("Solve")) {
+        if (ImGui::Button("Enum") && !is_running) {
+            std::thread thr([]{ is_running = true; Phys_SolveEnum(); is_running = false; });
+            thr.detach();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Lemke") && !is_running) {
+            std::thread thr([]{ is_running = true; Phys_SolveLemke(); is_running = false; });
+            thr.detach();
+        }
 
-    if (ImGui::Button("Solve")) {
-        Phys_Solve();
+        if (!is_running) {
+            ImGui::InputInt("n_tangents", &n_tangents);
+            n_tangents = std::min(n_tangents, MAX_N_TANGENTS);
+            n_tangents = std::max(2, n_tangents);
+        }
     }
 
     ImGui::InputFloat("Line length", &settings.line_len, 0.1f, 1.f, "%.3f");
@@ -892,6 +994,32 @@ void Render_Draw()
     else {
         ImGui::Text("Snap: OFF"); ImGui::SameLine();
         if (ImGui::Button("ON")) settings.snap_enabled = true;
+    }
+
+    ImGui::Text("Full mode:"); ImGui::SameLine();
+    if (ImGui::Button("OFF##full_mode")) {
+        settings.full_mode = VIEW_NONE;
+        InitFrameBuffers2x2();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("1")) {
+        settings.full_mode = VIEW_PERSPECTIVE;
+        InitFrameBufferFullMode();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("2")) {
+        settings.full_mode = VIEW_ORTHO + 0;
+        InitFrameBufferFullMode();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("3")) {
+        settings.full_mode = VIEW_ORTHO + 1;
+        InitFrameBufferFullMode();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("4")) {
+        settings.full_mode = VIEW_ORTHO + 2;
+        InitFrameBufferFullMode();
     }
 
     ImGui::Separator();
@@ -966,7 +1094,7 @@ void Render_Draw()
         ImGui::InputDouble("normal force", &c->res_normal_force);
         double sum = 0;
         double norm2 = 0;
-        for (int i = 0; i < N_TANGENTS; i++) {
+        for (int i = 0; i < n_tangents; i++) {
             sum += fabs(c->res_tangent_force[i]);
             norm2 += c->res_tangent_force[i]*c->res_tangent_force[i];
         }
@@ -974,7 +1102,7 @@ void Render_Draw()
         ImGui::Text("tangent force norm: %lf", sqrt(norm2));
 
         ImGui::Text("normal force: %lf", c->res_normal_force);
-        for (int i = 0; i < N_TANGENTS; i++) {
+        for (int i = 0; i < n_tangents; i++) {
             ImGui::Text("tangent force %d: %lf", i, c->res_tangent_force[i]);
         }
 

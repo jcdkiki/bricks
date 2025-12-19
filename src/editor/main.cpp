@@ -127,6 +127,11 @@ void SetupStyle()
     };
 }
 
+void onResizeCallback(GLFWwindow* window, int width, int height)
+{
+    Render_OnResize(width, height);
+}
+
 int main(void)
 {
     if (!glfwInit()) {
@@ -135,7 +140,7 @@ int main(void)
 
     float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor());
     glfwWindowHint(GLFW_SAMPLES, 8);
-    window = glfwCreateWindow(WIN_WIDTH, WIN_HEIGHT, "bricks", NULL, NULL);
+    window = glfwCreateWindow(1280, 720, "bricks", NULL, NULL);
     if (!window) {
         glfwTerminate();
         return -1;
@@ -145,6 +150,7 @@ int main(void)
     glfwSetMouseButtonCallback(window, mouseButtonCallback);
     glfwSetKeyCallback(window, keyCallback);
     glfwSetScrollCallback(window, scrollCallback);
+    glfwSetFramebufferSizeCallback(window, onResizeCallback);
 
     if (!gladLoadGL()) {
         glfwTerminate();

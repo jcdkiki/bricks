@@ -6,5 +6,6 @@ void Render_OnMouse(int button, int action, int mods);
 void Render_OnKey(int key, int action, int mods);
 void Render_UpdateCamera(double dt);
 void Render_OnScroll(int xoffset, int yoffset);
+void Render_OnResize(int width, int height);
 
 #endif
