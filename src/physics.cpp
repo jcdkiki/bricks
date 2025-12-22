@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <math.h>
 #include "solvers.h"
-#include "good_assert.h" 
 
 #define GRAVITY 9.8
 
@@ -79,9 +78,14 @@ static Vec3 CalcInertia(Body *b)
 Vec3 Phys_ForceEffectOnPoint(Vec3 force_pos, Vec3 center_of_mass, Vec3 force, Vec3 point, double mass, Vec3 inertia)
 {
     Vec3 a_lin = Vec3_Scale(force, 1.0 / mass);
-    Vec3 torque = Vec3_Cross(Vec3_Sub(force_pos, center_of_mass), force);
-    Vec3 a_ang = { torque.x / inertia.x, torque.y / inertia.y, torque.z / inertia.z };
-    return Vec3_Add(a_lin, Vec3_Cross(a_ang, Vec3_Sub(point, center_of_mass)));
+    Vec3 r1 = Vec3_Sub(force_pos, center_of_mass);
+    Vec3 torque = Vec3_Cross(r1, force);
+    torque.x /= inertia.x;
+    torque.y /= inertia.y;
+    torque.z /= inertia.z;
+    Vec3 r2 = Vec3_Sub(point, center_of_mass);
+    Vec3 a_ang = Vec3_Cross(torque, r2);
+    return Vec3_Add(a_lin, a_ang);
 }
 
 double ProjectForce(int axes, int forces, int k, int l)

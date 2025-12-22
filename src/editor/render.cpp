@@ -658,15 +658,17 @@ void Render_Scene(FrameBuffer *fb, float proj[16], float view[16])
         glColor3f(1.f, 1.f, 0.3f);
         for (int i = 0; i < contacts.size(); i++) {
             if (settings.less_arrows && i != settings.selected_contact) continue;
+            
+            Vec3 total {0, 0, 0};
             Contact *c = &contacts[i];
-            if (fabs(c->res_normal_force) > 1e-4)
-                DrawArrow(c->pos, Vec3_Scale(c->axes[AXIS_NORMAL], c->res_normal_force));
-
+            total = Vec3_Add(total, Vec3_Scale(c->axes[AXIS_NORMAL], c->res_normal_force));
+            
             for (int j = 0; j < n_tangents; j++) {
-                if (fabs(c->res_tangent_force[j]) > 1e-4) {
-                    DrawArrow(c->pos, Vec3_Scale(c->axes[AXIS_TANGENT1 + j], c->res_tangent_force[j]));
-                }
+                total = Vec3_Add(total, Vec3_Scale(c->axes[AXIS_TANGENT1 + j], c->res_tangent_force[j]));
             }
+
+            if (Vec3_Length(total) > 1e-6)
+                DrawArrow(c->pos, total);
         }
     }
 

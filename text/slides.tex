@@ -5,15 +5,31 @@
 \usepackage{amsmath}
 \usepackage[utf8]{inputenc}
 \usepackage[russian]{babel}
+\usepackage{bm}
+
+\mode<presentation>
+ {
+   \usetheme{Singapore}
+ }
+
+\setbeamertemplate{navigation symbols}{}
+
+\setbeamertemplate
+{footline}{\quad\hfill\insertframenumber/\inserttotalframenumber\strut\quad} 
 
 \title{Силы в точках контактов тел}
+\author{Горский К.Д. \and Кашечкин О.В.}
 \date{}
 
-\newcommand{\norm}[1]{\left\lVert#1\right\rVert}
+\graphicspath{{pics}}
+
+\newcommand{\norm}[1]{\lVert#1\rVert}
 
 \begin{document}
 
-\frame{\titlepage}
+\begin{frame}
+    \titlepage
+\end{frame}
 
 \begin{frame}
 \frametitle{Постановка задачи}
@@ -29,7 +45,7 @@
         \end{block}
 
         \begin{block}{Найти:}
-            Такие силы нормальной реакции и силы трения, возникающие в этих точках, что:
+            Такие силы реакции опоры и силы трения, возникающие в этих точках, что:
             \begin{itemize}
                 \item Тела не проникают друг в друга
                 \item Силы трения препятствуют проскальзыванию
@@ -48,11 +64,12 @@
 \frametitle{Как выглядит контакт?}
 \begin{columns}    
     \begin{column}{0.7\textwidth}
-        В точке контакта есть:
+        Точка контакта
         \begin{itemize}
-            \item Плосность контакта
-            \item Относительное ускорение
-            \item Коэффициент трения
+            \item Через неё проходит плоскость контакта
+            \item У неё есть относительное ускорение
+            \item У неё есть коэффициент трения
+            \item В ней применяются силы реакции опоры и трения
         \end{itemize}
     \end{column}
 
@@ -68,39 +85,42 @@
 \frametitle{Формализация}
     \small
     \begin{columns}
-        \begin{column}{0.5\textwidth}
+        \begin{column}{0.25\textwidth}
             \[
             \begin{cases}
                 1: f_n \ge 0 \\
                 2: a_n \ge 0 \\
                 3: f_n a_n = 0 \\ 
-                4: \mu f_n \ge \norm{f_t} \\
-                5: \norm{a_t} (\mu f_n - \norm{f_t}) = 0 \\
-                6: \norm{a_t} \norm{f_t} = -(a_t \cdot f_t)
+                4: \mu f_n \ge \norm{\pmb{f}_t} \\
+                5: \norm{\pmb{a}_t} (\mu f_n - \norm{\pmb{f}_t}) = 0 \\
+                6: \norm{\pmb{a}_t} \norm{\pmb{f}_t} = - \langle \pmb{a}_t, \pmb{f}_t \rangle
             \end{cases}
             \]
         \end{column}
 
-        \begin{column}{0.5\textwidth}
-            $f_n$ -- величина силы нормальной (скаляр)
+        \begin{column}{0.05\textwidth}
+        \end{column}
+
+        \begin{column}{0.7\textwidth}
+            $f_n$ -- величина силы реакции опоры (скаляр)
             
             \medskip
             $a_n$ -- относительное ускорение в направлении нормали (скаляр)
             
             \medskip
-            $f_t$ -- сила трения (2D вектор в плоскости контакта)
+            $\pmb{f}_t$ -- сила трения (2D вектор в плоскости контакта)
             
             \medskip
-            $a_t$ -- относительное ускорение в плоскости контакта (тоже 2D вектор)
+            $\pmb{a}_t$ -- относительное ускорение в плоскости контакта (тоже 2D вектор)
         \end{column}
     \end{columns}
 
     \begin{enumerate}
-        \item Сила нормальная применяется в нужную сторону
+        \item Сила реакции опоры применяется в направлении отталкивания
         \item Нет проникновения одного тела в другое
-        \item Если тела отдаляются, то силы применять и так уже не надо.
-        \item Сила трения ограничена силой нормальной
-        \item Если есть проскальзывание, то сила трения по величина максимальна.
+        \item Если тела отдаляются, сила в точке контакта отсутствует
+        \item Сила трения ограничена силой реакции опоры
+        \item Если есть проскальзывание, то сила трения максимальна по величине
         \item Сила трения направлена против ускорения (если оно есть)
     \end{enumerate}
 \end{frame}
@@ -109,55 +129,84 @@
 \small
 \frametitle{Формализация. Как силы влияют на ускорение?}
     
-    Хотим узнать, как влияет некоторая сила на ускорение какой-то точки тела.
+    Хотим узнать, как влияет какая-то сила на ускорение какой-то точки тела.
 
     \begin{block}{Что известно}
-        $c$ -- центр масс тела.
-        
-        $r_1$ -- точка, в которой применяется сила.
-        
-        $r_2$ -- интересующая нас точка.
-        
-        $f$ -- направление применения силы.
-        
-        $m, I$ -- масса тела и его тензор инерции.
+        $
+        \begin{aligned}
+            \pmb{c} &- \text{центр масс тела } (\pmb{c} \in \mathbb{R}^3) \\
+            \pmb{p}_1 &- \text{точка, в которой применяется сила } (\pmb{p}_1 \in \mathbb{R}^3) \\
+            \pmb{p}_2 &- \text{интересующая нас точка } (\pmb{p}_2 \in \mathbb{R}^3) \\
+            \pmb{f} &- \text{применяемая сила } (\pmb{f} \in \mathbb{R}^3) \\
+            m, I &- \text{масса тела и его тензор инерции } (m \in \mathbb{R}, I \in \mathbb{M}_{3 \times 3})
+        \end{aligned}
+        $
     \end{block}
 
     \begin{block}{Вычисляем}
-        $a_{lin} = f/m$ -- линейный вклад силы в ускорение.
+        $\pmb{a}_{lin} = \pmb{f}/m$ -- линейный вклад силы в ускорение
         
-        $t = (r_1 - c) \times f$ -- крутящий момент.
+        $\pmb{r}_1 = \pmb{p}_1 - \pmb{c}$
+        
+        $\pmb{r}_2 = \pmb{p}_2 - \pmb{c}$
 
-        $a_{ang} = I^{-1} t$ -- угловой вклад силы в ускорение.
+        $\pmb{\tau} = \pmb{r}_1 \times \pmb{f}$ -- крутящий момент
 
-        $a = a_{lin} + a_{ang}$
+        $\pmb{a}_{ang} = I^{-1} \pmb{\tau} \times \pmb{r}_2$ -- угловой вклад силы в ускорение.
+
+        $\pmb{a} = \pmb{a}_{lin} + \pmb{a}_{ang}$
     \end{block}
 \end{frame}
 
+\newcommand*{\defeq}{\stackrel{\scalebox{0.5}{\text{def}}}{:=}}
+
 \begin{frame}
 \frametitle{Формализация. Проецируем все силы}
-    Отображение линейное!
+        \begin{columns}
+        \begin{column}[T]{0.5\textwidth}
+        \[    
+        \pmb{f} \defeq \norm{\pmb{f}} \cdot \pmb{\hat{f}} \defeq f \cdot \pmb{\hat{f}}
+        \]
+        
+        \[
+        \pmb{a}_{lin} = (\pmb{\hat{f}}/m) \cdot f        
+        \]
+        
+        \[
+        \pmb{\tau} = \pmb{r}_1 \times (f \cdot \pmb{\hat{f}}) = (\pmb{r}_1 \times \pmb{\hat{f}}) \cdot f
+        \]
+        \begin{align*} 
+            \pmb{a}_{ang} &= I^{-1} \pmb{\tau} \times \pmb{r}_2 \\
+            &= I^{-1} ((\pmb{r}_1 \times \pmb{\hat{f}}) \cdot f) \times \pmb{r}_2 \\
+            &= (I^{-1} (\pmb{r}_1 \times \pmb{\hat{f}}) \times \pmb{r}_2) \cdot f
+        \end{align*}
+        \end{column}
 
-    \[A
-    \begin{pmatrix} f_1 \\ f_2 \\ \vdots \\ f_{N} \end{pmatrix}
-    =
-    \begin{pmatrix} a_1 \\ a_2 \\ \vdots \\ a_M \end{pmatrix}
-    \]
+        \begin{column}[T]{0.5\textwidth}
+        Отображение линейное!
+
+        \[A
+        \begin{pmatrix} f_1 \\ f_2 \\ \vdots \\ f_{N} \end{pmatrix}
+        =
+        \begin{pmatrix} a_1 \\ a_2 \\ \vdots \\ a_N \end{pmatrix}
+        \]
+        \end{column}
+        \end{columns}
 \end{frame}
 
 \begin{frame}[t]
 \frametitle{Формализация. Как решать?}
     \small
-    \[
+    $
     \begin{cases}
         f_n \ge 0 \\
         a_n \ge 0 \\
         f_n a_n = 0 \\ 
-        \mu f_n \ge \norm{f_t} \\
-        \norm{a_t} (\mu f_n - \norm{f_t}) = 0 \\
-        \norm{a_t} \norm{f_t} = -(a_t \cdot f_t)
+        \mu f_n \ge \norm{\pmb{f}_t} \\
+        \norm{\pmb{a}_t} (\mu f_n - \norm{\pmb{f}_t}) = 0 \\
+        \norm{\pmb{a}_t} \norm{\pmb{f}_t} = - \langle \pmb{a}_t, \pmb{f}_t \rangle
     \end{cases}
-    \]
+    $
 
     \begin{itemize}
         \item Ограничения выпуклые?
@@ -169,188 +218,308 @@
 \begin{frame}[t]
 \frametitle{Формализация. Как решать?}
     \small
-    Перефразируем первые 3 условия:
+    $
+    \begin{cases}
+        f_n \ge 0 \\
+        a_n \ge 0 \\
+        f_n a_n = 0 \\ 
+        \mu f_n \ge \norm{\pmb{f}_t} \\
+        \norm{\pmb{a}_t} (\mu f_n - \norm{\pmb{f}_t}) = 0 \\
+        \norm{\pmb{a}_t} \norm{\pmb{f}_t} = - \langle \pmb{a}_t, \pmb{f}_t \rangle
+    \end{cases}
+    $
 
+    \bigskip
+    Условие дополняющей нежесткости:
     $0 \le a \perp b \ge 0  \iff  \{ a \ge 0, b \ge 0, ab = 0 \}$
 
-    \[
-    \begin{cases}
-        0 \le f_n \perp a_n \ge 0 \\
-        \mu f_n \ge \norm{f_t} \\
-        \norm{a_t} (\mu f_n - \norm{f_t}) = 0 \\
-        \norm{a_t} \norm{f_t} = -(a_t \cdot f_t)
-    \end{cases}
-    \]
-
-
+    \bigskip
+    Перефразируем первые 3 условия
 \end{frame}
 
 \begin{frame}[t]
 \frametitle{Формализация. Как решать?}
-    \small
-    Перефразируем первые 3 условия:
+    \small \bigskip \bigskip \medskip
+    $
+    \begin{cases}
+        0 \le f_n \perp a_n \ge 0 \\
+        \mu f_n \ge \norm{\pmb{f}_t} \\
+        \norm{\pmb{a}_t} (\mu f_n - \norm{\pmb{f}_t}) = 0 \\
+        \norm{\pmb{a}_t} \norm{\pmb{f}_t} = -\langle \pmb{a}_t, \pmb{f}_t \rangle
+    \end{cases}
+    $
 
-    $0 \le a \perp b \ge 0  \iff  \{ a \ge 0, b \ge 0, ab = 0 \}$
+    \bigskip
+    Зафиксируем направление силы трения.
+    
+    \bigskip
+    $
+    \begin{aligned}
+    \pmb{f}_t &= \norm{\pmb{f}_t} \cdot \pmb{\hat{f}}_t = f_t \cdot \pmb{\hat{f}}_t \\
+    \pmb{\hat{f}}_t &= const
+    \end{aligned}
+    $
+\end{frame}
 
-    \[
+
+\begin{frame}[t]
+\frametitle{Формализация. Как решать?}
+    \small \bigskip \bigskip \medskip
+    $
     \begin{cases}
         0 \le f_n \perp a_n \ge 0 \\
         \mu f_n \ge |f_t| \\
-        \norm{a_t} (\mu f_n - |f_t|) = 0 \\
-        \norm{a_t} |f_t| = -(a \cdot t) \cdot f_t
+        \norm{\pmb{a}_t} (\mu f_n - |f_t|) = 0 \\
+        \norm{\pmb{a}_t} |f_t| = -\langle \pmb{a}_t, \pmb{\hat{f}}_t \rangle \cdot f_t
     \end{cases}
-    \]
+    $
 
-    Выберем направление силы трения произвольно.
-    Тогда $f_t$ превращается в скаляр. $t$ -- направление силы
-\end{frame}
-
-
-
-\begin{frame}[t]
-\frametitle{Формализация. Как решать?}
-    \small
-    Перефразируем первые 3 условия:
-
-    $0 \le a \perp b \ge 0  \iff  \{ a \ge 0, b \ge 0, ab = 0 \}$
-
-    \[
-    \begin{cases}
-        0 \le f_n \perp a_n \ge 0 \\
-        \mu f_n \ge f_{t+} + f_{t-} \\
-        \norm{a_t} (\mu f_n - f_{t+} - f_{t-}) = 0 \\
-        \norm{a_t} (f_{t+} + f_{t-}) = -(a \cdot t) \cdot (f_{t+} - f_{t-}) \\
-        f_{t+} \perp f_{t-}
-    \end{cases}
-    \]
-
-    Выберем направление силы трения произвольно.
-    Тогда $f_t$ превращается в скаляр. $t$ -- направление силы
-
-    Разобьем $f_t$ на две части: $f_{t+}$, $f_{t-}$. Первая применяется в положительном направлении. Вторая -- в отрицательном.
-    Наложим на них требование $f_{t+} \perp f_{t-}$.
-    Тогда $f_t = f_{t+} - f_{t-}$, $|f_t| = f_{t+} + f_{t-}$
-\end{frame}
-
-
-\begin{frame}[t]
-\frametitle{Формализация. Как решать?}
-    \small
-    Перефразируем первые 3 условия:
-
-    $0 \le a \perp b \ge 0  \iff  \{ a \ge 0, b \ge 0, ab = 0 \}$
-
-    \[
-    \begin{cases}
-        0 \le f_n \perp a_n \ge 0 \\
-        \mu f_n \ge f_{t+} + f_{t-} \\
-        \norm{a_t} (\mu f_n - f_{t+} - f_{t-}) = 0 \\
-        \norm{a_t} (f_{t+} + f_{t-}) = -(a \cdot t) \cdot (f_{t+} - f_{t-}) \\
-        f_{t+} \perp f_{t-} \\
-        \\
-        \beta \ge 0 \\
-        0 \le (a \cdot t) + \beta \perp f_{t+} \ge 0 \\ 
-        0 \le -(a \cdot t) + \beta \perp f_{t-} \ge 0 
-    \end{cases}
-    \]
-
-    Введём дополнительную переменную $\beta$ и добавим 2 условия. Индикаторы наличия движения.
-    Условия 4 и 5 становятся бесполезными.
-
-\end{frame}
-
-
-
-\begin{frame}[t]
-\frametitle{Формализация. Как решать?}
-    \small
-    Перефразируем первые 3 условия:
-
-    $0 \le a \perp b \ge 0  \iff  \{ a \ge 0, b \ge 0, ab = 0 \}$
-
-    \[
-    \begin{cases}
-        0 \le f_n \perp a_n \ge 0 \\
-        \mu f_n \ge f_{t+} + f_{t-} \\
-        \norm{a_t} (\mu f_n - f_{t+} - f_{t-}) = 0 \\
-        \\
-        \beta \ge 0 \\
-        0 \le (a \cdot t) + \beta \perp f_{t+} \ge 0 \\ 
-        0 \le -(a \cdot t) + \beta \perp f_{t-} \ge 0 
-    \end{cases}
-    \]
-
-    Условие 3 гласит: если скольжение есть, то сила трения по величине максимальна.
-    Это условие можно переписать через $\beta$
-\end{frame}
-
-
-\begin{frame}[t]
-\frametitle{Формализация. Как решать?}
-    \small
-    Перефразируем первые 3 условия:
-
-    $0 \le a \perp b \ge 0  \iff  \{ a \ge 0, b \ge 0, ab = 0 \}$
-
-    \[
-    \begin{cases}
-        0 \le f_n \perp a_n \ge 0 \\
-        \mu f_n \ge f_{t+} + f_{t-} \\
-        0 \le \mu f_n - f_{t+} - f_{t-} \perp \beta \ge 0 \\
-        \\
-        0 \le (a \cdot t) + \beta \perp f_{t+} \ge 0 \\ 
-        0 \le -(a \cdot t) + \beta \perp f_{t-} \ge 0 
-    \end{cases}
-    \]
-
-    Условие 2 теперь, кстати, тоже бесполезное.
-\end{frame}
-
-
-
-\begin{frame}[t]
-\frametitle{Формализация. Как решать?}
-    \small
-    Перефразируем первые 3 условия:
-
-    $0 \le a \perp b \ge 0  \iff  \{ a \ge 0, b \ge 0, ab = 0 \}$
-
-    \[
-    \begin{cases}
-        0 \le f_n \perp a_n \ge 0 \\
-        0 \le \mu f_n - f_{t+} - f_{t-} \perp \beta \ge 0 \\
-        0 \le (a \cdot t) + \beta \perp f_{t+} \ge 0 \\ 
-        0 \le -(a \cdot t) + \beta \perp f_{t-} \ge 0 
-    \end{cases}
-    \]
-
-    Теперь все ограничения, кроме условий дополняющей нежесткости, линейны.
-    С этой задачей смогут справиться солверы LCP (Linear Complementarity problem).
-    \medskip
+    \bigskip
+    В решении этой системы сила трения будет направлена против относительного ускорения в плоскости контакта.
+    Допустим, что это условие выполнено:
     
-    Перебирать направления сил трения и выбирать лучшее решение?
+    \medskip
+    $
+    \begin{aligned}
+    \pmb{a}_t &= \norm{\pmb{a}_t} \cdot \pmb{\hat{a}}_t = a_t \cdot \pmb{\hat{a}}_t \\
+    \pmb{\hat{a}}_t &= \pmb{\hat{f}}_t = const
+    \end{aligned}
+    $
+
+    \medskip
+    Тогда нет смысла рассматривать относительное ускорение в плоскости, будем рассматривать только его проекцию на направление силы трения.
+    Из-за сделанного допущения проекция на ортоганальное направление будет нулевой.
+
 \end{frame}
+
+
+
+\begin{frame}[t]
+\frametitle{Формализация. Как решать?}
+    \small \bigskip \bigskip \medskip
+    $
+    \begin{cases}
+        0 \le f_n \perp a_n \ge 0 \\
+        \mu f_n \ge |f_t| \\
+        |a_t| (\mu f_n - |f_t|) = 0 \\
+        |a_t| |f_t| = -a_t \cdot f_t
+    \end{cases}
+    $
+
+    \bigskip
+    Вместо силы $f_t$ будем прикладывать \textbf{либо} $f_{t+}$, \textbf{либо} $f_{t-}$, направленные в противоположных направлениях.
+    
+    \bigskip
+    Поэтому потребуем $0 \le f_{t+} \perp f_{t-} \ge 0$
+    
+    \bigskip
+    $\begin{aligned}
+    \text{Тогда } f_t& \text{ можно записать как: }& f_t &= f_{t+} - f_{t-} \\
+    \text{А } |f_t|& \text{ можно записать как: }& |f_t| &= f_{t+} + f_{t-}
+    \end{aligned}$
+
+    \bigskip
+    На множество значений, которое может принимать $f_t$ это не повлияет.
+\end{frame}
+
+
+
+\begin{frame}[t]
+\frametitle{Формализация. Как решать?}
+    \small \bigskip \bigskip \medskip
+    $
+    \begin{cases}
+        0 \le f_n \perp a_n \ge 0 \\
+        \mu f_n \ge f_{t+} + f_{t-} \\
+        |a_t| (\mu f_n - f_{t+} - f_{t-}) = 0 \\
+        |a_t| (f_{t+} + f_{t-}) = -a_t \cdot (f_{t+} - f_{t-}) \\
+        0 \le f_{t+} \perp f_{t-} \ge 0
+    \end{cases}
+    $
+
+    \bigskip
+    Введем вспомогательную переменную $\beta$ -- индикатор наличия движения.
+
+    \medskip
+    $
+    \begin{cases}
+        0 \le a_t + \beta \perp f_{t+} \ge 0 \\
+        0 \le -a_t + \beta \perp f_{t-} \ge 0
+    \end{cases}
+    $
+
+\end{frame}
+
+
+\begin{frame}[t]
+\frametitle{Формализация. Как решать?}
+    \small \bigskip \bigskip \medskip
+    $
+    \begin{cases}
+        0 \le f_n \perp a_n \ge 0 \\
+        \mu f_n \ge f_{t+} + f_{t-} \\
+        |a_t| (\mu f_n - f_{t+} - f_{t-}) = 0 \\
+        |a_t| (f_{t+} + f_{t-}) = -a_t \cdot (f_{t+} - f_{t-}) \\
+        0 \le f_{t+} \perp f_{t-} \ge 0 \\
+        \\
+        0 \le a_t + \beta \perp f_{t+} \ge 0 \\
+        0 \le -a_t + \beta \perp f_{t-} \ge 0 \\
+        \beta \ge 0
+    \end{cases}
+    $
+
+    \bigskip
+    Условия с индикатором из двух сил разрешают только одну силу: действующую против относительного ускорения. Таким образом, условия 4 и 5 становятся лишними.
+
+\end{frame}
+
+
+\begin{frame}[t]
+\frametitle{Формализация. Как решать?}
+    \small \bigskip \bigskip \medskip
+    $
+    \begin{cases}
+        0 \le f_n \perp a_n \ge 0 \\
+        \mu f_n \ge f_{t+} + f_{t-} \\
+        |a_t| (\mu f_n - f_{t+} - f_{t-}) = 0 \\
+        \\ \\ \\
+        0 \le a_t + \beta \perp f_{t+} \ge 0 \\
+        0 \le -a_t + \beta \perp f_{t-} \ge 0 \\
+        \beta \ge 0
+    \end{cases}
+    $ 
+
+    \bigskip
+    $
+    \begin{aligned}
+    (\mu f_n \ge f_{t+} + f_{t-}) &\iff (\mu f_n - f_{t+} - f_{t-} \ge 0) \\
+    (|a_t| \ne 0) &\iff (\beta \ne 0)
+    \end{aligned}
+    $
+
+\end{frame}
+
+
+\begin{frame}[t]
+\frametitle{Формализация. Как решать?}
+    \small \bigskip \bigskip \medskip
+    $
+    \begin{cases}
+        0 \le f_n &\perp a_n \ge 0 \\
+        0 \le a_t + \beta &\perp f_{t+} \ge 0 \\
+        0 \le -a_t + \beta &\perp f_{t-} \ge 0 \\
+        \\
+        \mu f_n - f_{t+} - f_{t-} &\ge 0  \\
+        \beta &\ge 0 \\
+        \beta (\mu f_n - f_{t+} - f_{t-}) &= 0
+    \end{cases}
+    $ 
+\end{frame}
+
+
+
+\begin{frame}[t]
+\frametitle{Формализация. Как решать?}
+    \small \bigskip \bigskip \medskip
+    $
+    \begin{cases}
+        0 \le a_n                       &\perp f_n    \ge 0 \\
+        0 \le a_t + \beta               &\perp f_{t+} \ge 0 \\
+        0 \le -a_t + \beta              &\perp f_{t-} \ge 0 \\
+        0 \le \mu f_n - f_{t+} - f_{t-} &\perp \beta  \ge 0
+    \end{cases}
+    $
+
+    \bigskip
+    Готово. Свели задачу к LCP (Linear Complementarity Problem).
+    Решаем её алгоритмом Лемке.
+    
+    \begin{block}{Формулировка LCP}
+    Найти такие $x$, что:
+    $
+    \begin{cases}
+        x \ge 0 \\
+        Ax + b \ge 0 \\
+        x^T(Ax+b) = 0
+    \end{cases}
+    $
+    \end{block}
+\end{frame}
+
+
+\begin{frame}[t]
+\frametitle{LCP}
+    $
+    \begin{matrix}
+        A & x & & b \\
+        \begin{pmatrix}
+            A_{nn} & A_{nt} & -A_{nt} & 0 \\
+            A_{tn} & A_{tt} & -A_{tt} & E \\
+            -A_{tn} & -A_{tt} & A_{tt} & E \\
+            M & -E & -E & 0
+        \end{pmatrix} &
+        \begin{pmatrix}
+        F_{n} \\
+        F_{t+} \\
+        F_{t-}  \\
+        B
+        \end{pmatrix}
+        & + &
+        \begin{pmatrix}
+        P_{n} \\
+        P_{t} \\
+        -P_{t}  \\
+        0
+        \end{pmatrix} & \ge 0
+    \end{matrix} 
+    $
+
+    \medskip
+    $
+    \begin{matrix}
+        M & F_n & F_{t+} & F_{t-} & B \\
+
+        \begin{pmatrix} \mu_1 \\ & \ddots \\ & & \mu_N \end{pmatrix} &
+        \begin{pmatrix} f_{n,1} \\ \vdots \\ f_{n,N} \end{pmatrix} &
+        \begin{pmatrix} f_{t+,1} \\ \vdots \\ f_{t+,N} \end{pmatrix} &
+        \begin{pmatrix} f_{t-,1} \\ \vdots \\ f_{t-,N} \end{pmatrix} &
+        \begin{pmatrix} \beta_{1} \\ \vdots \\ \beta_N \end{pmatrix}
+    \end{matrix}
+    $
+
+    \medskip
+    $A_{nn}$ -- проекция сил реакции опоры на направления нормалей плоскостей касаний.
+
+    $A_{nt}$, $A_{tn}$, $A_{tt}$ -- аналогично, проекции сил на направления.
+
+    $P_{n}$, $P_{t}$ -- проекции внешних сил на направления.
+\end{frame}
+
 
 \begin{frame}
     \small
     \frametitle{Выбор лучшего решения}
-
-    Для каждого решения, для каждого контакта имеем $a$ -- относительное ускорение (3D вектор).
     
-    Рассматриваем его в базисе контакта:  $a_n$ (скаляр), $a_t$ (2D вектор).
+    Перебираем различные направления сил трения.
 
-    Штрафуем за несоблюдение оригинальных условий:
+    Для сведения системы к решаемой мы сделали одно допущение:
+    \begin{quote}
+    В решении этой системы сила трения будет направлена против относительного ускорения в плоскости контакта.
+    Допустим, что это условие выполнено.
+    \end{quote}
+
+    Потенциально нарушаемые условия:
 
     \[
-    \begin{matrix}
-        f_n \ge 0 - \text{OK!} && \\
-        a_n \ge 0 - \text{OK!} &&\\
-        f_n a_n = 0 - \text{OK!} && \\ 
-        \mu f_n \ge \norm{f_t} - \text{OK!} && \\
-        \norm{a_t} (\mu f_n - \norm{f_t}) = 0 - \textbf{NOT OK!} && |\norm{a_t} (\mu f_n - \norm{f_t})| \\
-        \norm{a_t} \norm{f_t} = -(a_t \cdot f_t) - \textbf{NOT OK!} && |\norm{a_t} \norm{f_t} + (a_t \cdot f_t)|
-    \end{matrix}
+    \begin{cases}
+        \norm{\pmb{a}_t} (\mu f_n - \norm{\pmb{f}_t}) = 0 & \text{Штраф: } |\norm{a_t} (\mu f_n - \norm{f_t})| \\
+        \norm{\pmb{a}_t} \norm{\pmb{f}_t} = - \langle \pmb{a}_t, \pmb{f}_t \rangle & \text{Штраф: } |\norm{a_t} \norm{f_t} + (a_t \cdot f_t)|
+    \end{cases}
     \]
+
+    \bigskip
+    Выбираем решение с наименьшим штрафом.
+
 \end{frame}
 
 \begin{frame}
@@ -405,14 +574,14 @@
 
 \begin{frame}
     \frametitle{Результаты}
-    Масса верхнего кипчича 1 vs 20.
-
     \begin{columns}
         \begin{column}{0.5\textwidth}
-            \includegraphics[width=\textwidth]{result_i5_2.png}
+            Массы равны.
+            \includegraphics[width=\textwidth]{result_i5_1.png}
         \end{column}
         \begin{column}{0.5\textwidth}
-            \includegraphics[width=\textwidth]{result_i5_1.png}
+            Правый тяжелее в 20 раз.
+            \includegraphics[width=\textwidth]{result_i5_2.png}
         \end{column}
     \end{columns}
 \end{frame}
